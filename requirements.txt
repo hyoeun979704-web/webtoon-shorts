@@ -2,5 +2,6 @@ playwright>=1.40.0
 Pillow>=10.0.0
 python-dotenv>=1.0.0
 gspread>=6.0.0
+gspread-formatting>=1.2.0
 google-auth-oauthlib>=1.0.0
 requests>=2.31.0

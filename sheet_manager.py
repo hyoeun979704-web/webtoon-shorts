@@ -69,35 +69,49 @@ def _get_or_create_worksheet(
 
 
 def init_sheet(spreadsheet: gspread.Spreadsheet) -> None:
-    """시트에 필요한 탭과 헤더를 초기화합니다. (이미 있으면 건너뜀)"""
+    """시트에 필요한 탭과 헤더를 초기화합니다. (이미 있으면 건너뜀)
+
+    서식/유효성검사/조건부서식까지 포함한 전체 세팅은
+    `python setup_sheet.py`를 사용하세요.
+    """
+    existing = [ws.title for ws in spreadsheet.worksheets()]
+    needs_setup = False
+
     # 설정 탭
-    ws, existed = _get_or_create_worksheet(spreadsheet, TAB_SETTINGS, 20, 2)
-    if not existed:
-        rows = [["항목", "값"]]
+    if TAB_SETTINGS not in existing:
+        ws = spreadsheet.add_worksheet(TAB_SETTINGS, rows=20, cols=3)
+        rows = [["항목", "값", "설명"]]
         for key, val in DEFAULT_SETTINGS.items():
-            rows.append([key, val])
+            rows.append([key, val, ""])
         ws.update(range_name="A1", values=rows)
+        ws.format("A1:C1", {"textFormat": {"bold": True}})
+        needs_setup = True
         log.info("  [%s] 탭 생성 완료", TAB_SETTINGS)
     else:
         log.info("  [%s] 탭 이미 존재", TAB_SETTINGS)
 
     # 작업목록 탭
-    ws, existed = _get_or_create_worksheet(spreadsheet, TAB_TASKS, 100, len(TASK_HEADERS))
-    if not existed:
+    if TAB_TASKS not in existing:
+        ws = spreadsheet.add_worksheet(TAB_TASKS, rows=100, cols=len(TASK_HEADERS))
         ws.update(range_name="A1", values=[TASK_HEADERS])
         ws.format("A1:I1", {"textFormat": {"bold": True}})
+        needs_setup = True
         log.info("  [%s] 탭 생성 완료", TAB_TASKS)
     else:
         log.info("  [%s] 탭 이미 존재", TAB_TASKS)
 
     # 대본 탭
-    ws, existed = _get_or_create_worksheet(spreadsheet, TAB_SCRIPT, 30, len(SCRIPT_HEADERS))
-    if not existed:
+    if TAB_SCRIPT not in existing:
+        ws = spreadsheet.add_worksheet(TAB_SCRIPT, rows=30, cols=len(SCRIPT_HEADERS))
         ws.update(range_name="A1", values=[SCRIPT_HEADERS])
         ws.format("A1:I1", {"textFormat": {"bold": True}})
+        needs_setup = True
         log.info("  [%s] 탭 생성 완료", TAB_SCRIPT)
     else:
         log.info("  [%s] 탭 이미 존재", TAB_SCRIPT)
+
+    if needs_setup:
+        log.info("  팁: `python setup_sheet.py`로 서식/유효성검사/조건부서식을 추가할 수 있습니다.")
 
     # 기본 Sheet1 삭제
     existing = [ws.title for ws in spreadsheet.worksheets()]

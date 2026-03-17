@@ -70,12 +70,17 @@ playwright install chromium
 ## 사용법
 
 ```bash
+# 0) 시트 초기 세팅 (최초 1회 - 서식/드롭다운/조건부서식 적용)
+python setup_sheet.py
+# 기존 시트 초기화 후 재생성:
+python setup_sheet.py --reset
+
 # 1) 서비스 로그인 (최초 1회 - 브라우저에서 직접 로그인)
 python main.py --login
 
 # 2) 시트 [설정] 탭에 필수 항목 입력:
-#    - 카테고리: "직장인 공감"     (필수)
-#    - 성우 이름: "서연"           (필수)
+#    - 카테고리: "직장인 공감"     (필수, 주황색 배경)
+#    - 성우 이름: "서연"           (필수, 주황색 배경)
 #    - Claude 프로젝트 URL         (선택)
 #    - ChatGPT 프로젝트 URL        (선택)
 
@@ -98,6 +103,7 @@ python main.py
 
 ```
 ├── main.py              # 메인 파이프라인 오케스트레이터
+├── setup_sheet.py       # Google Sheets 초기 세팅 (서식/드롭다운/조건부서식)
 ├── config.py            # 설정 (URL, 경로 등)
 ├── utils.py             # 공통 유틸리티 (로깅, JSON 파싱, Playwright 헬퍼)
 ├── browser_manager.py   # Playwright 브라우저 세션 관리
