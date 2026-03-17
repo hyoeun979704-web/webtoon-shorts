@@ -22,6 +22,8 @@ DEFAULT_SETTINGS = {
     "성우 이름": "",
     "이미지 스타일": "webtoon style, manhwa art, digital illustration",
     "장면 수": "5",
+    "장면당 컷 수": "3~4",
+    "총 이미지 수": "15~20",
     "목표 길이(초)": "30",
     "편집 모드": "capcut",
     "대본 검토": "Y",
@@ -36,7 +38,7 @@ TASK_HEADERS = [
 
 # ── 대본 탭 헤더 ──
 SCRIPT_HEADERS = [
-    "장면번호", "나레이션", "이미지 프롬프트", "자막",
+    "장면번호", "컷번호", "나레이션", "이미지 프롬프트", "자막",
     "이미지 상태", "음성 상태",
 ]
 
@@ -78,9 +80,9 @@ def init_sheet(spreadsheet: gspread.Spreadsheet) -> None:
 
     # 대본 탭
     if TAB_SCRIPT not in existing:
-        ws = spreadsheet.add_worksheet(TAB_SCRIPT, rows=20, cols=len(SCRIPT_HEADERS))
+        ws = spreadsheet.add_worksheet(TAB_SCRIPT, rows=30, cols=len(SCRIPT_HEADERS))
         ws.update(range_name="A1", values=[SCRIPT_HEADERS])
-        ws.format("A1:F1", {"textFormat": {"bold": True}})
+        ws.format("A1:G1", {"textFormat": {"bold": True}})
         print(f"  [{TAB_SCRIPT}] 탭 생성 완료")
     else:
         print(f"  [{TAB_SCRIPT}] 탭 이미 존재")
@@ -196,59 +198,90 @@ def find_task_row(spreadsheet: gspread.Spreadsheet, task_number) -> int:
 def write_script_to_sheet(
     spreadsheet: gspread.Spreadsheet, script: dict
 ) -> None:
-    """생성된 대본을 [대본] 탭에 씁니다."""
+    """생성된 대본을 [대본] 탭에 씁니다.
+
+    구조: 장면당 여러 컷(이미지)이 있고, 나레이션/자막은 장면 첫 컷에만 표시.
+    """
     ws = spreadsheet.worksheet(TAB_SCRIPT)
     ws.clear()
     ws.update(range_name="A1", values=[SCRIPT_HEADERS])
-    ws.format("A1:F1", {"textFormat": {"bold": True}})
+    ws.format("A1:G1", {"textFormat": {"bold": True}})
 
     rows = []
     for scene in script["scenes"]:
-        rows.append([
-            scene["scene_number"],
-            scene["narration"],
-            scene["image_prompt"],
-            scene.get("subtitle", ""),
-            "",  # 이미지 상태
-            "",  # 음성 상태
-        ])
+        cuts = scene.get("cuts", [])
+        if not cuts:
+            # 하위 호환: 컷이 없으면 image_prompt를 단일 컷으로
+            cuts = [{"cut_number": 1, "image_prompt": scene.get("image_prompt", "")}]
+
+        for i, cut in enumerate(cuts):
+            rows.append([
+                scene["scene_number"],
+                cut["cut_number"],
+                scene["narration"] if i == 0 else "",      # 나레이션은 첫 컷에만
+                cut["image_prompt"],
+                scene.get("subtitle", "") if i == 0 else "",  # 자막도 첫 컷에만
+                "",  # 이미지 상태
+                "",  # 음성 상태 (첫 컷에만 의미)
+            ])
     if rows:
         ws.update(range_name="A2", values=rows)
 
 
 def read_script_from_sheet(spreadsheet: gspread.Spreadsheet) -> dict | None:
-    """[대본] 탭에서 대본을 읽어 dict로 반환합니다."""
+    """[대본] 탭에서 대본을 읽어 dict로 반환합니다.
+
+    컷 기반 행을 장면 단위로 묶어 반환합니다.
+    """
     ws = spreadsheet.worksheet(TAB_SCRIPT)
     records = ws.get_all_records()
     if not records:
         return None
 
-    scenes = []
+    scenes_map: dict[int, dict] = {}
     for rec in records:
         scene_num = rec.get("장면번호", "")
         if not scene_num:
             continue
-        scenes.append({
-            "scene_number": int(scene_num),
-            "narration": rec.get("나레이션", ""),
+        scene_num = int(scene_num)
+        cut_num = int(rec.get("컷번호", 1))
+
+        if scene_num not in scenes_map:
+            scenes_map[scene_num] = {
+                "scene_number": scene_num,
+                "narration": rec.get("나레이션", ""),
+                "subtitle": rec.get("자막", ""),
+                "cuts": [],
+            }
+
+        scenes_map[scene_num]["cuts"].append({
+            "cut_number": cut_num,
             "image_prompt": rec.get("이미지 프롬프트", ""),
-            "subtitle": rec.get("자막", ""),
         })
 
+        # 나레이션/자막이 비어있으면 첫 컷에서 가져온 값 유지
+        if rec.get("나레이션", "").strip():
+            scenes_map[scene_num]["narration"] = rec["나레이션"]
+        if rec.get("자막", "").strip():
+            scenes_map[scene_num]["subtitle"] = rec["자막"]
+
+    scenes = [scenes_map[k] for k in sorted(scenes_map)]
     return {"title": "", "scenes": scenes}
 
 
-def update_script_scene_status(
+def update_script_cut_status(
     spreadsheet: gspread.Spreadsheet,
-    scene_number: int,
+    sheet_row: int,
     image_status: str = "",
     voice_status: str = "",
 ) -> None:
-    """[대본] 탭에서 특정 장면의 이미지/음성 상태를 업데이트합니다."""
+    """[대본] 탭에서 특정 행의 이미지/음성 상태를 업데이트합니다.
+
+    Args:
+        sheet_row: 시트 행 번호 (1-indexed, 헤더=1)
+    """
     ws = spreadsheet.worksheet(TAB_SCRIPT)
-    # 장면번호는 A열, row = scene_number + 1 (헤더)
-    row = scene_number + 1
     if image_status:
-        ws.update_cell(row, 5, image_status)  # E열
+        ws.update_cell(sheet_row, 6, image_status)  # F열
     if voice_status:
-        ws.update_cell(row, 6, voice_status)  # F열
+        ws.update_cell(sheet_row, 7, voice_status)  # G열

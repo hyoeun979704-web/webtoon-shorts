@@ -170,22 +170,27 @@ def assemble_video(
     all_files = image_paths + voice_paths
     upload_assets(page, all_files)
 
-    # 타임라인에 장면 배치
-    print("  타임라인 구성 중...")
-    for i, scene in enumerate(script["scenes"]):
-        print(f"    장면 {scene['scene_number']} 배치...")
-        # 이미지 추가
-        add_to_timeline(page, i)
-        page.wait_for_timeout(500)
+    # 타임라인에 컷(이미지) 순서대로 배치
+    print(f"  타임라인 구성 중... (이미지 {len(image_paths)}장)")
+    cut_index = 0
+    for scene in script["scenes"]:
+        scene_num = scene["scene_number"]
+        cuts = scene.get("cuts", [{"cut_number": 1}])
 
-        # 자막 추가
+        for cut in cuts:
+            print(f"    장면 {scene_num} 컷 {cut['cut_number']} 배치...")
+            add_to_timeline(page, cut_index)
+            page.wait_for_timeout(500)
+            cut_index += 1
+
+        # 자막은 장면의 첫 컷 위치에 추가
         subtitle = scene.get("subtitle", "")
         if subtitle:
             add_subtitle(page, subtitle)
         page.wait_for_timeout(500)
 
-    # 음성 트랙 추가
-    print("  음성 트랙 배치 중...")
+    # 음성 트랙 추가 (장면당 1개)
+    print(f"  음성 트랙 배치 중... ({len(voice_paths)}개)")
     for i in range(len(voice_paths)):
         add_to_timeline(page, len(image_paths) + i)
         page.wait_for_timeout(500)

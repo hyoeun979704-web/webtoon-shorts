@@ -24,8 +24,21 @@ PROMPT_TEMPLATE = """웹툰 숏폼 영상 대본을 작성해줘.
     {{
       "scene_number": 1,
       "narration": "나레이션 텍스트 (한국어, 1~2문장, 감정과 리듬감 있게)",
-      "image_prompt": "DALL-E용 영어 이미지 프롬프트 (상세한 구도, 표정, 분위기 묘사)",
-      "subtitle": "자막 (핵심 한마디, 8자 이내)"
+      "subtitle": "자막 (핵심 한마디, 8자 이내)",
+      "cuts": [
+        {{
+          "cut_number": 1,
+          "image_prompt": "DALL-E용 영어 이미지 프롬프트 (상세한 구도, 표정, 분위기)"
+        }},
+        {{
+          "cut_number": 2,
+          "image_prompt": "같은 장면의 다른 앵글/순간 묘사"
+        }},
+        {{
+          "cut_number": 3,
+          "image_prompt": "감정이 고조되는 클로즈업 등"
+        }}
+      ]
     }}
   ]
 }}
@@ -33,6 +46,13 @@ PROMPT_TEMPLATE = """웹툰 숏폼 영상 대본을 작성해줘.
 
 규칙:
 - 장면 {scene_count}개 구성
+- 각 장면당 컷(이미지) {cuts_per_scene}개씩, 총 이미지 {total_images}장
+- 웹툰처럼 한 장면 안에서 컷이 빠르게 전환되는 구성
+- 컷 구성 예시:
+  - 컷1: 상황 설정 (와이드샷)
+  - 컷2: 인물 반응 (미디엄샷/클로즈업)
+  - 컷3: 감정 강조 (익스트림 클로즈업/리액션)
+  - 컷4: 결과/반전 (새로운 앵글)
 - 첫 장면은 반드시 강렬한 훅 (시청자 이탈 방지)
 - 마지막 장면은 반전 또는 여운이 있는 마무리
 - 나레이션은 구어체로, 읽는데 4~7초
@@ -40,8 +60,8 @@ PROMPT_TEMPLATE = """웹툰 숏폼 영상 대본을 작성해줘.
 - image_prompt 규칙:
   - 영어로 작성
   - "{image_style}" 키워드 필수 포함
-  - 캐릭터 외형을 일관되게 묘사 (같은 인물은 같은 특징)
-  - 구도(close-up, wide shot 등), 조명, 표정을 구체적으로
+  - 캐릭터 외형을 일관되게 묘사 (같은 인물은 같은 특징 반복)
+  - 구도(extreme close-up, medium shot, wide shot, bird's eye 등), 조명, 표정을 구체적으로
   - 텍스트/글자/말풍선 묘사 절대 금지
 - 자막은 임팩트 있는 핵심 문구, 초성체 가능
 - JSON만 출력"""
@@ -110,6 +130,8 @@ def generate_script(
     project_url: str = "",
     image_style: str = "webtoon style, manhwa art, digital illustration",
     scene_count: int = 5,
+    cuts_per_scene: str = "3~4",
+    total_images: str = "15~20",
 ) -> dict:
     """Claude 프로젝트에서 대본을 생성합니다.
 
@@ -119,6 +141,8 @@ def generate_script(
         project_url: Claude 프로젝트 URL (프로젝트의 시스템 프롬프트가 적용됨)
         image_style: 이미지 스타일 키워드
         scene_count: 장면 수
+        cuts_per_scene: 장면당 컷 수 (예: "3~4")
+        total_images: 총 이미지 수 (예: "15~20")
     """
     ensure_login(page, config.CLAUDE_URL, "Claude")
     _navigate_to_project_or_new(page, project_url)
@@ -131,6 +155,8 @@ def generate_script(
         topic=topic,
         style_instruction=style_instruction,
         scene_count=scene_count,
+        cuts_per_scene=cuts_per_scene,
+        total_images=total_images,
         image_style=image_style,
     )
 
@@ -148,5 +174,6 @@ def generate_script(
             raise ValueError(f"JSON을 찾을 수 없습니다. 응답:\n{response[:500]}")
 
     script = json.loads(json_str)
-    print(f"  대본 생성 완료: {script['title']} ({len(script['scenes'])}장면)")
+    total_cuts = sum(len(s.get("cuts", [])) for s in script["scenes"])
+    print(f"  대본 생성 완료: {script['title']} ({len(script['scenes'])}장면, {total_cuts}컷)")
     return script

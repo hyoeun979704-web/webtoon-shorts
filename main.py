@@ -97,6 +97,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
     chatgpt_project = settings.get("ChatGPT 프로젝트 URL", "").strip()
     image_style = settings.get("이미지 스타일", "webtoon style, manhwa art, digital illustration")
     scene_count = int(settings.get("장면 수", "5"))
+    cuts_per_scene = settings.get("장면당 컷 수", "3~4")
+    total_images = settings.get("총 이미지 수", "15~20")
 
     sheet_manager.update_task_status(
         spreadsheet, row, "진행중",
@@ -117,22 +119,26 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             project_url=claude_project,
             image_style=image_style,
             scene_count=scene_count,
+            cuts_per_scene=cuts_per_scene,
+            total_images=total_images,
         )
         claude_page.close()
+
+        total_cuts = sum(len(s.get("cuts", [])) for s in script["scenes"])
 
         # 대본을 시트에 기록
         sheet_manager.write_script_to_sheet(spreadsheet, script)
         sheet_manager.update_task_status(
             spreadsheet, row, "1/4 대본 생성완료",
             제목=script["title"],
-            장면수=len(script["scenes"]),
+            장면수=f"{len(script['scenes'])}장면/{total_cuts}컷",
         )
 
         script_path = os.path.join(project_dir, "script.json")
         with open(script_path, "w", encoding="utf-8") as f:
             json.dump(script, f, ensure_ascii=False, indent=2)
 
-        print(f"  제목: {script['title']} ({len(script['scenes'])}장면)")
+        print(f"  제목: {script['title']} ({len(script['scenes'])}장면, {total_cuts}컷)")
 
         # ===== 검토 포인트 1: 대본 검토 =====
         if review_script:
@@ -169,22 +175,37 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         gpt_page = browser.new_page()
         ensure_login(gpt_page, config.CHATGPT_URL, "ChatGPT")
 
-        image_paths = []
+        image_paths = []  # 컷별 이미지 경로 (전체)
+        scene_image_map = {}  # {scene_number: [image_paths]}
         os.makedirs(images_dir, exist_ok=True)
+
+        sheet_row = 2  # 시트 행 번호 (헤더=1)
         for scene in script["scenes"]:
             scene_num = scene["scene_number"]
-            output_path = os.path.join(images_dir, f"scene_{scene_num:02d}.png")
+            cuts = scene.get("cuts", [])
+            if not cuts:
+                cuts = [{"cut_number": 1, "image_prompt": scene.get("image_prompt", "")}]
 
-            print(f"  장면 {scene_num} 이미지 생성 중...")
-            generate_image(gpt_page, scene["image_prompt"], output_path, chatgpt_project)
-            image_paths.append(output_path)
+            scene_image_map[scene_num] = []
+            for cut in cuts:
+                cut_num = cut["cut_number"]
+                output_path = os.path.join(
+                    images_dir, f"scene_{scene_num:02d}_cut_{cut_num:02d}.png"
+                )
 
-            sheet_manager.update_script_scene_status(
-                spreadsheet, scene_num, image_status="완료"
-            )
-            print(f"  장면 {scene_num} 이미지 완료")
+                print(f"  장면 {scene_num} 컷 {cut_num} 이미지 생성 중...")
+                generate_image(gpt_page, cut["image_prompt"], output_path, chatgpt_project)
+                image_paths.append(output_path)
+                scene_image_map[scene_num].append(output_path)
+
+                sheet_manager.update_script_cut_status(
+                    spreadsheet, sheet_row, image_status="완료"
+                )
+                print(f"  장면 {scene_num} 컷 {cut_num} 이미지 완료")
+                sheet_row += 1
 
         gpt_page.close()
+        print(f"  총 {len(image_paths)}장 이미지 생성 완료")
 
         # ===== 3단계: 음성 생성 (Typecast) =====
         print(f"\n[3/4] 음성 생성 중 (Typecast)...")
@@ -194,6 +215,17 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
         voice_paths = []
         os.makedirs(voices_dir, exist_ok=True)
+
+        # 음성은 장면당 1개 (나레이션 기준)
+        # 시트에서 각 장면의 첫 번째 컷 행을 찾아 음성 상태 업데이트
+        scene_first_row = {}
+        current_row = 2
+        for scene in script["scenes"]:
+            scene_num = scene["scene_number"]
+            scene_first_row[scene_num] = current_row
+            num_cuts = len(scene.get("cuts", [{"cut_number": 1}]))
+            current_row += num_cuts
+
         for scene in script["scenes"]:
             scene_num = scene["scene_number"]
             output_path = os.path.join(voices_dir, f"voice_{scene_num:02d}.wav")
@@ -202,8 +234,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             generate_voice(tc_page, scene["narration"], output_path, actor_name)
             voice_paths.append(output_path)
 
-            sheet_manager.update_script_scene_status(
-                spreadsheet, scene_num, voice_status="완료"
+            sheet_manager.update_script_cut_status(
+                spreadsheet, scene_first_row[scene_num], voice_status="완료"
             )
             print(f"  장면 {scene_num} 음성 완료")
 
