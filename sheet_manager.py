@@ -70,11 +70,23 @@ def connect(spreadsheet_url: str) -> gspread.Spreadsheet:
     ]
 
     for path in sa_paths:
-        if path and os.path.isfile(path):
-            log.info("  서비스 계정 인증: %s", path)
-            gc = gspread.service_account(filename=path)
-            return gc.open_by_url(spreadsheet_url)
+        if path:
+            log.info("  서비스 계정 파일 확인: %s (존재=%s)", path, os.path.isfile(path))
+            if os.path.isfile(path):
+                log.info("  서비스 계정 인증: %s", path)
+                gc = gspread.service_account(filename=path)
+                return gc.open_by_url(spreadsheet_url)
 
+    # 서비스 계정 파일이 없으면 폴더 내 파일 목록 출력
+    log.warning("  service_account.json을 찾을 수 없습니다.")
+    log.warning("  스크립트 폴더: %s", _here)
+    try:
+        files = [f for f in os.listdir(_here) if f.endswith(".json")]
+        log.warning("  폴더 내 JSON 파일: %s", files)
+    except Exception:
+        pass
+
+    log.info("  OAuth 인증으로 전환합니다...")
     gc = gspread.oauth()
     return gc.open_by_url(spreadsheet_url)
 
