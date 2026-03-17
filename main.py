@@ -1,16 +1,16 @@
 """웹툰 숏폼 자동 생성 파이프라인 (Google Sheets + 브라우저 자동화)
 
-Google Sheets에서 설정과 작업목록을 읽어 자동으로 영상을 생성합니다.
-
-시트 구조:
-  [설정] 탭   - 성우 이름, 이미지 스타일, 편집 모드 등
-  [작업목록] 탭 - 주제를 '대기' 상태로 적어두면 순서대로 처리
-  [대본] 탭   - 생성된 대본 확인/수정 가능
+Google Sheets를 컨트롤 패널로 사용합니다:
+  [설정] 탭 - 카테고리, 프로젝트 URL, 성우, 스타일 등
+  [작업목록] 탭 - '대기' 상태 작업을 순서대로 처리
+  [대본] 탭 - 생성된 대본 확인/수정
 
 사용법:
-    python main.py              # 시트의 '대기' 작업을 순서대로 처리
-    python main.py --init       # 시트 초기 탭/헤더 세팅
-    python main.py --login      # 각 서비스 로그인만 수행
+    python main.py                 # 시트의 '대기' 작업 처리
+    python main.py --init          # 시트 초기 탭/헤더 세팅
+    python main.py --login         # 각 서비스 로그인만 수행
+    python main.py --keywords      # 카테고리 기반 토픽 키워드 발굴 → 작업목록에 추가
+    python main.py --keywords-and-run  # 키워드 발굴 + 바로 영상 생성
 """
 
 import argparse
@@ -21,9 +21,10 @@ import time
 import config
 import sheet_manager
 from browser_manager import BrowserManager, ensure_login
+from keyword_generator import generate_keywords
 from script_generator import generate_script
-from image_generator import generate_scene_images
-from voice_generator import generate_scene_voices
+from image_generator import generate_image
+from voice_generator import generate_voice
 from video_editor import assemble_video
 
 
@@ -44,6 +45,37 @@ def login_all(browser: BrowserManager):
     print("\n모든 서비스 로그인 완료!")
 
 
+def discover_keywords(browser: BrowserManager, spreadsheet, settings: dict):
+    """카테고리에서 토픽 키워드를 발굴하고 작업목록에 추가합니다."""
+    category = settings.get("카테고리", "").strip()
+    if not category:
+        print("\n[설정] 탭에 '카테고리'를 입력해주세요.")
+        print("  예: 직장인 공감, 연애, MBTI, 고양이, 학교생활 등")
+        return
+
+    count = int(settings.get("키워드 개수", "5"))
+    claude_project = settings.get("Claude 프로젝트 URL", "").strip()
+
+    print(f"\n카테고리 [{category}]에서 토픽 {count}개 발굴 중...")
+    if claude_project:
+        print(f"  Claude 프로젝트: {claude_project}")
+
+    claude_page = browser.new_page()
+    keywords = generate_keywords(
+        claude_page,
+        category=category,
+        count=count,
+        project_url=claude_project,
+    )
+    claude_page.close()
+
+    # 작업목록에 추가
+    added = sheet_manager.append_tasks(spreadsheet, keywords)
+    print(f"\n[작업목록]에 {added}건 추가 완료!")
+    print("  → 시트에서 확인 후, 불필요한 항목 삭제 가능")
+    print("  → python main.py 로 실행하면 '대기' 작업을 처리합니다")
+
+
 def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dict):
     """하나의 작업(주제)을 처리합니다."""
     topic = task["주제"]
@@ -56,23 +88,35 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
     voices_dir = os.path.join(project_dir, "voices")
     os.makedirs(project_dir, exist_ok=True)
 
+    # 설정 읽기
     actor_name = settings.get("성우 이름", "")
     edit_mode = settings.get("편집 모드", "capcut").strip().lower()
     auto_approve = settings.get("자동 대본 승인", "N").strip().upper() == "Y"
+    claude_project = settings.get("Claude 프로젝트 URL", "").strip()
+    chatgpt_project = settings.get("ChatGPT 프로젝트 URL", "").strip()
+    image_style = settings.get("이미지 스타일", "webtoon style, manhwa art, digital illustration")
+    scene_count = int(settings.get("장면 수", "5"))
 
-    # 상태 업데이트: 진행중
     sheet_manager.update_task_status(
         spreadsheet, row, "진행중",
         시작시간=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
 
     try:
-        # ===== 1단계: 대본 생성 (Claude) =====
+        # ===== 1단계: 대본 생성 (Claude 프로젝트) =====
         print(f"\n[1/4] 대본 생성 중 (Claude) - '{topic}'")
+        if claude_project:
+            print(f"  프로젝트: {claude_project}")
         sheet_manager.update_task_status(spreadsheet, row, "1/4 대본 생성중")
 
         claude_page = browser.new_page()
-        script = generate_script(claude_page, topic)
+        script = generate_script(
+            claude_page,
+            topic=topic,
+            project_url=claude_project,
+            image_style=image_style,
+            scene_count=scene_count,
+        )
         claude_page.close()
 
         # 대본을 시트에 기록
@@ -83,43 +127,42 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             장면수=len(script["scenes"]),
         )
 
-        # 대본을 로컬에도 저장
         script_path = os.path.join(project_dir, "script.json")
         with open(script_path, "w", encoding="utf-8") as f:
             json.dump(script, f, ensure_ascii=False, indent=2)
 
         print(f"  제목: {script['title']} ({len(script['scenes'])}장면)")
 
-        # 자동 승인이 아니면 사용자가 시트에서 대본 수정할 시간 제공
+        # 대본 확인/수정
         if not auto_approve:
             print("\n" + "=" * 50)
             print("  [대본] 탭에서 나레이션/프롬프트를 확인·수정하세요.")
             print("  수정 완료 후 Enter를 눌러주세요.")
             print("=" * 50)
             input("  → Enter: ")
-            # 수정된 대본 다시 읽기
             edited = sheet_manager.read_script_from_sheet(spreadsheet)
             if edited and edited["scenes"]:
                 edited["title"] = script["title"]
                 script = edited
                 print("  시트에서 수정된 대본을 반영했습니다.")
 
-        # ===== 2단계: 이미지 생성 (ChatGPT + DALL-E) =====
+        # ===== 2단계: 이미지 생성 (ChatGPT 프로젝트 + DALL-E) =====
         print(f"\n[2/4] 이미지 생성 중 (ChatGPT DALL-E)...")
+        if chatgpt_project:
+            print(f"  프로젝트: {chatgpt_project}")
         sheet_manager.update_task_status(spreadsheet, row, "2/4 이미지 생성중")
 
         gpt_page = browser.new_page()
         ensure_login(gpt_page, config.CHATGPT_URL, "ChatGPT")
 
         image_paths = []
+        os.makedirs(images_dir, exist_ok=True)
         for scene in script["scenes"]:
             scene_num = scene["scene_number"]
             output_path = os.path.join(images_dir, f"scene_{scene_num:02d}.png")
-            os.makedirs(images_dir, exist_ok=True)
 
             print(f"  장면 {scene_num} 이미지 생성 중...")
-            from image_generator import generate_image
-            generate_image(gpt_page, scene["image_prompt"], output_path)
+            generate_image(gpt_page, scene["image_prompt"], output_path, chatgpt_project)
             image_paths.append(output_path)
 
             sheet_manager.update_script_scene_status(
@@ -136,13 +179,12 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         tc_page = browser.new_page()
 
         voice_paths = []
+        os.makedirs(voices_dir, exist_ok=True)
         for scene in script["scenes"]:
             scene_num = scene["scene_number"]
             output_path = os.path.join(voices_dir, f"voice_{scene_num:02d}.wav")
-            os.makedirs(voices_dir, exist_ok=True)
 
             print(f"  장면 {scene_num} 음성 생성 중...")
-            from voice_generator import generate_voice
             generate_voice(tc_page, scene["narration"], output_path, actor_name)
             voice_paths.append(output_path)
 
@@ -194,6 +236,8 @@ def main():
     )
     parser.add_argument("--init", action="store_true", help="시트 초기 세팅")
     parser.add_argument("--login", action="store_true", help="서비스 로그인만 수행")
+    parser.add_argument("--keywords", action="store_true", help="카테고리에서 토픽 키워드 발굴")
+    parser.add_argument("--keywords-and-run", action="store_true", help="키워드 발굴 후 바로 영상 생성")
     parser.add_argument("--headless", action="store_true", help="브라우저 숨김")
     args = parser.parse_args()
 
@@ -210,16 +254,17 @@ def main():
         print("\n시트 초기화 중...")
         sheet_manager.init_sheet(spreadsheet)
         print("\n시트 초기화 완료!")
-        print("  1. [설정] 탭에서 성우 이름 등을 입력하세요")
-        print("  2. [작업목록] 탭에서 주제를 추가하고 상태를 '대기'로 설정하세요")
-        print("  3. python main.py 로 실행하면 '대기' 작업을 순서대로 처리합니다")
+        print("  1. [설정] 탭에서 카테고리, 프로젝트 URL, 성우 이름 등을 입력")
+        print("  2. python main.py --keywords 로 토픽 키워드 자동 발굴")
+        print("  3. python main.py 로 영상 자동 생성")
         return
 
     # 설정 읽기
     settings = sheet_manager.read_settings(spreadsheet)
-    print(f"  성우: {settings.get('성우 이름', '(미지정)')}")
-    print(f"  편집 모드: {settings.get('편집 모드', 'capcut')}")
-    print(f"  자동 대본 승인: {settings.get('자동 대본 승인', 'N')}")
+    print(f"  카테고리: {settings.get('카테고리', '(미지정)')}")
+    print(f"  Claude 프로젝트: {settings.get('Claude 프로젝트 URL', '(없음)') or '(없음)'}")
+    print(f"  ChatGPT 프로젝트: {settings.get('ChatGPT 프로젝트 URL', '(없음)') or '(없음)'}")
+    print(f"  성우: {settings.get('성우 이름', '(미지정)') or '(미지정)'}")
 
     with BrowserManager() as browser:
         # 로그인 모드
@@ -227,11 +272,18 @@ def main():
             login_all(browser)
             return
 
+        # 키워드 발굴 모드
+        if args.keywords or args.keywords_and_run:
+            discover_keywords(browser, spreadsheet, settings)
+            if not args.keywords_and_run:
+                return
+
         # 대기 작업 가져오기
         pending = sheet_manager.get_pending_tasks(spreadsheet)
         if not pending:
             print("\n처리할 '대기' 작업이 없습니다.")
-            print("  → [작업목록] 탭에서 주제를 추가하고 상태를 '대기'로 설정하세요")
+            print("  → [작업목록]에 주제 추가 후 상태를 '대기'로 설정하세요")
+            print("  → 또는 python main.py --keywords 로 자동 발굴하세요")
             return
 
         print(f"\n처리할 작업: {len(pending)}건")

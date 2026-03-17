@@ -15,12 +15,16 @@ TAB_SCRIPT = "대본"
 
 # ── 설정 탭 기본값 ──
 DEFAULT_SETTINGS = {
+    "카테고리": "",
+    "키워드 개수": "5",
+    "Claude 프로젝트 URL": "",
+    "ChatGPT 프로젝트 URL": "",
     "성우 이름": "",
     "이미지 스타일": "webtoon style, manhwa art, digital illustration",
     "장면 수": "5",
     "목표 길이(초)": "30",
-    "편집 모드": "capcut",  # capcut / skip
-    "자동 대본 승인": "N",  # Y면 대본 수정 없이 바로 진행
+    "편집 모드": "capcut",
+    "자동 대본 승인": "N",
 }
 
 # ── 작업목록 탭 헤더 ──
@@ -143,6 +147,36 @@ def update_task_status(
         col = field_col_map.get(field)
         if col:
             ws.update_cell(row_number, col, str(value))
+
+
+def append_tasks(spreadsheet: gspread.Spreadsheet, keywords: list[dict]) -> int:
+    """키워드 목록을 [작업목록] 탭에 '대기' 상태로 추가합니다.
+
+    Returns:
+        추가된 작업 수
+    """
+    ws = spreadsheet.worksheet(TAB_TASKS)
+    existing = ws.get_all_values()
+    next_num = len(existing)  # 헤더 포함이므로 다음 번호 = 행 수
+
+    rows = []
+    for i, kw in enumerate(keywords):
+        rows.append([
+            next_num + i,                                  # 번호
+            kw["topic"],                                   # 주제
+            "대기",                                        # 상태
+            "",                                            # 제목
+            "",                                            # 장면수
+            "",                                            # 시작시간
+            "",                                            # 완료시간
+            "",                                            # 출력경로
+            kw.get("hook", ""),                            # 비고 (훅 문구)
+        ])
+
+    if rows:
+        ws.append_rows(rows)
+
+    return len(rows)
 
 
 def find_task_row(spreadsheet: gspread.Spreadsheet, task_number) -> int:
