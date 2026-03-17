@@ -157,16 +157,16 @@ function setupTasksTab(ss) {
   ];
 
   var range = sheet.getRange('A2:I100');
+  var rules = sheet.getConditionalFormatRules();
   statusColors.forEach(function(s) {
     var rule = SpreadsheetApp.newConditionalFormatRule()
       .whenFormulaSatisfied('=SEARCH("' + s.text + '",$C2)')
       .setBackground(s.color)
       .setRanges([range])
       .build();
-    var rules = sheet.getConditionalFormatRules();
     rules.push(rule);
-    sheet.setConditionalFormatRules(rules);
   });
+  sheet.setConditionalFormatRules(rules);
 
   // 헤더 고정
   sheet.setFrozenRows(1);
@@ -209,6 +209,7 @@ function setupScriptTab(ss) {
   }
 
   // 조건부 서식: 상태 "완료" → 녹색
+  var scriptRules = sheet.getConditionalFormatRules();
   ['H2:H30', 'I2:I30'].forEach(function(rangeStr) {
     var r = sheet.getRange(rangeStr);
     var rule = SpreadsheetApp.newConditionalFormatRule()
@@ -216,10 +217,9 @@ function setupScriptTab(ss) {
       .setBackground('#D9FFD9')
       .setRanges([r])
       .build();
-    var rules = sheet.getConditionalFormatRules();
-    rules.push(rule);
-    sheet.setConditionalFormatRules(rules);
+    scriptRules.push(rule);
   });
+  sheet.setConditionalFormatRules(scriptRules);
 
   // 헤더 고정
   sheet.setFrozenRows(1);
