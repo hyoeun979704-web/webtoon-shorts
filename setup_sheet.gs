@@ -1,40 +1,16 @@
 /**
  * 웹툰 숏폼 자동화 - Google Sheets 초기 세팅
  *
- * 사용법:
- *   1. Google Sheets에서 [확장 프로그램] → [Apps Script] 열기
- *   2. 이 코드를 전체 복사하여 붙여넣기
- *   3. ▶ 실행 버튼 클릭 (함수: setupAll)
- *   4. 권한 승인 후 자동 세팅 완료
+ * 타임아웃 방지를 위해 단계별 실행:
+ *   1. step1_설정탭 실행
+ *   2. step2_작업목록탭 실행
+ *   3. step3_대본탭 실행
  */
 
-function setupAll() {
+function step1_설정탭() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  setupSettingsTab(ss);
-  SpreadsheetApp.flush();
-  setupTasksTab(ss);
-  SpreadsheetApp.flush();
-  setupScriptTab(ss);
-  SpreadsheetApp.flush();
-  removeDefaultSheet(ss);
-
-  SpreadsheetApp.getUi().alert(
-    '세팅 완료!\n\n' +
-    '다음 단계:\n' +
-    '1. [설정] 탭에서 카테고리, 성우 이름 입력\n' +
-    '2. python main.py --login (서비스 로그인)\n' +
-    '3. python main.py (자동 실행)'
-  );
-}
-
-// ════════════════════════════════════════
-// [설정] 탭
-// ════════════════════════════════════════
-
-function setupSettingsTab(ss) {
-  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = getOrCreateSheet(ss, '설정');
+  var sheet = ss.getSheetByName('설정');
+  if (!sheet) sheet = ss.insertSheet('설정');
   sheet.clear();
 
   var data = [
@@ -54,114 +30,59 @@ function setupSettingsTab(ss) {
     ['편집 검토', 'Y', 'Y=CapCut 배치 후 수동 확인, N=바로 내보내기'],
   ];
   sheet.getRange(1, 1, data.length, 3).setValues(data);
-
-  // 헤더 서식
-  sheet.getRange('A1:C1')
-       .setBackground('#292833')
-       .setFontColor('#ffffff')
-       .setFontWeight('bold')
-       .setFontSize(10)
-       .setHorizontalAlignment('center');
-
-  // 항목명 열
-  sheet.getRange(2, 1, data.length - 1, 1)
-       .setBackground('#EDEDF7')
-       .setFontWeight('bold');
-
-  // 필수 항목 강조
-  sheet.getRange('B2').setBackground('#FFF2E6');
-  sheet.getRange('B6').setBackground('#FFF2E6');
-
-  // 설명 열 서식
-  sheet.getRange(2, 3, data.length - 1, 1)
-       .setFontColor('#808080')
-       .setFontSize(9);
-
-  // 열 너비
+  sheet.getRange('A1:C1').setBackground('#292833').setFontColor('#ffffff').setFontWeight('bold');
   sheet.setColumnWidth(1, 180);
   sheet.setColumnWidth(2, 350);
   sheet.setColumnWidth(3, 380);
   sheet.setFrozenRows(1);
+
+  SpreadsheetApp.getUi().alert('1단계 완료! 다음: step2_작업목록탭 실행');
 }
 
-// ════════════════════════════════════════
-// [작업목록] 탭
-// ════════════════════════════════════════
-
-function setupTasksTab(ss) {
-  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
-  var headers = ['번호', '주제', '상태', '제목', '장면수', '시작시간', '완료시간', '출력경로', '비고'];
-  var sheet = getOrCreateSheet(ss, '작업목록');
+function step2_작업목록탭() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('작업목록');
+  if (!sheet) sheet = ss.insertSheet('작업목록');
   sheet.clear();
 
-  // 헤더
+  var headers = ['번호', '주제', '상태', '제목', '장면수', '시작시간', '완료시간', '출력경로', '비고'];
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  sheet.getRange(1, 1, 1, headers.length)
-       .setBackground('#292833')
-       .setFontColor('#ffffff')
-       .setFontWeight('bold')
-       .setFontSize(10)
-       .setHorizontalAlignment('center');
-
-  // 열 너비
+  sheet.getRange(1, 1, 1, headers.length).setBackground('#292833').setFontColor('#ffffff').setFontWeight('bold');
   var widths = [50, 280, 120, 200, 100, 150, 150, 250, 200];
   for (var i = 0; i < widths.length; i++) {
     sheet.setColumnWidth(i + 1, widths[i]);
   }
-
-  // 상태 열 드롭다운 (20행만)
-  var statusRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(['대기', '진행중', '완료', '오류'], true)
-    .build();
-  sheet.getRange('C2:C20').setDataValidation(statusRule);
-
   sheet.setFrozenRows(1);
+
+  SpreadsheetApp.getUi().alert('2단계 완료! 다음: step3_대본탭 실행');
 }
 
-// ════════════════════════════════════════
-// [대본] 탭
-// ════════════════════════════════════════
-
-function setupScriptTab(ss) {
-  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
-  var headers = ['장면번호', '컷번호', '나레이션', '자막', '이미지 프롬프트', '효과음', '장면전환', '이미지 상태', '음성 상태'];
-  var sheet = getOrCreateSheet(ss, '대본');
+function step3_대본탭() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('대본');
+  if (!sheet) sheet = ss.insertSheet('대본');
   sheet.clear();
 
-  // 헤더
+  var headers = ['장면번호', '컷번호', '나레이션', '자막', '이미지 프롬프트', '효과음', '장면전환', '이미지 상태', '음성 상태'];
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  sheet.getRange(1, 1, 1, headers.length)
-       .setBackground('#292833')
-       .setFontColor('#ffffff')
-       .setFontWeight('bold')
-       .setFontSize(10)
-       .setHorizontalAlignment('center');
-
-  // 수정 가능 영역 배경
-  sheet.getRange('C2:G30').setBackground('#FFFFF2');
-
-  // 열 너비
+  sheet.getRange(1, 1, 1, headers.length).setBackground('#292833').setFontColor('#ffffff').setFontWeight('bold');
   var widths = [70, 60, 250, 250, 350, 100, 100, 80, 80];
   for (var i = 0; i < widths.length; i++) {
     sheet.setColumnWidth(i + 1, widths[i]);
   }
-
   sheet.setFrozenRows(1);
-}
 
-// ════════════════════════════════════════
-// 유틸리티
-// ════════════════════════════════════════
-
-function getOrCreateSheet(ss, name) {
-  var sheet = ss.getSheetByName(name);
-  if (sheet) return sheet;
-  return ss.insertSheet(name);
-}
-
-function removeDefaultSheet(ss) {
+  // 기본 시트 삭제
   var sheet1 = ss.getSheetByName('Sheet1') || ss.getSheetByName('시트1');
   if (sheet1 && ss.getSheets().length > 1) {
     try { ss.deleteSheet(sheet1); } catch(e) {}
   }
+
+  SpreadsheetApp.getUi().alert(
+    '세팅 완료!\n\n' +
+    '다음 단계:\n' +
+    '1. [설정] 탭에서 카테고리, 성우 이름 입력\n' +
+    '2. python main.py --login (서비스 로그인)\n' +
+    '3. python main.py (자동 실행)'
+  );
 }
