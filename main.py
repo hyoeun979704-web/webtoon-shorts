@@ -6,11 +6,8 @@ Google Sheets를 컨트롤 패널로 사용합니다:
   [대본] 탭 - 생성된 대본 확인/수정
 
 사용법:
-    python main.py                 # 시트의 '대기' 작업 처리
-    python main.py --init          # 시트 초기 탭/헤더 세팅
-    python main.py --login         # 각 서비스 로그인만 수행
-    python main.py --keywords      # 카테고리 기반 토픽 키워드 발굴 → 작업목록에 추가
-    python main.py --keywords-and-run  # 키워드 발굴 + 바로 영상 생성
+    python main.py                 # 전체 자동 실행 (키워드 발굴 → 영상 생성)
+    python main.py --login         # 각 서비스 로그인만 수행 (최초 1회)
 """
 
 import argparse
@@ -46,18 +43,26 @@ def login_all(browser: BrowserManager):
     log.info("모든 서비스 로그인 완료!")
 
 
-def discover_keywords(browser: BrowserManager, spreadsheet, settings: dict):
-    """카테고리에서 토픽 키워드를 발굴하고 작업목록에 추가합니다."""
-    category = settings.get("카테고리", "").strip()
-    if not category:
-        log.error("[설정] 탭에 '카테고리'를 입력해주세요.")
-        log.error("  예: 직장인 공감, 연애, MBTI, 고양이, 학교생활 등")
-        return
+def _validate_settings(settings: dict) -> None:
+    """필수 설정값이 있는지 검증합니다."""
+    missing = []
+    if not settings.get("카테고리", "").strip():
+        missing.append("카테고리")
+    if not settings.get("성우 이름", "").strip():
+        missing.append("성우 이름")
+    if missing:
+        raise ValueError(
+            f"시트 [설정] 탭에 다음 항목을 입력해주세요: {', '.join(missing)}"
+        )
 
+
+def _auto_discover_keywords(browser: BrowserManager, spreadsheet, settings: dict) -> None:
+    """대기 작업이 없으면 자동으로 키워드를 발굴합니다."""
+    category = settings.get("카테고리", "").strip()
     count = int(settings.get("키워드 개수", "5") or "5")
     claude_project = settings.get("Claude 프로젝트 URL", "").strip()
 
-    log.info("카테고리 [%s]에서 토픽 %d개 발굴 중...", category, count)
+    log.info("카테고리 [%s]에서 토픽 %d개 자동 발굴 중...", category, count)
 
     claude_page = browser.new_page()
     try:
@@ -71,19 +76,7 @@ def discover_keywords(browser: BrowserManager, spreadsheet, settings: dict):
         claude_page.close()
 
     added = sheet_manager.append_tasks(spreadsheet, keywords)
-    log.info("[작업목록]에 %d건 추가 완료!", added)
-    log.info("  → 시트에서 확인 후, 불필요한 항목 삭제 가능")
-    log.info("  → python main.py 로 실행하면 '대기' 작업을 처리합니다")
-
-
-def _validate_settings(settings: dict) -> None:
-    """필수 설정값이 있는지 검증합니다."""
-    actor = settings.get("성우 이름", "").strip()
-    if not actor:
-        raise ValueError(
-            "시트 [설정] 탭에 '성우 이름'을 입력해주세요. "
-            "Typecast에서 사용할 성우 이름이 필요합니다."
-        )
+    log.info("[작업목록]에 %d건 자동 추가 완료", added)
 
 
 def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dict):
@@ -233,7 +226,6 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             voice_paths = []
             os.makedirs(voices_dir, exist_ok=True)
 
-            # 장면별 첫 번째 시트 행 번호 계산 (음성 상태 업데이트용)
             scene_first_row = {}
             current_row = 2
             for scene in script["scenes"]:
@@ -315,60 +307,52 @@ def main():
     parser = argparse.ArgumentParser(
         description="웹툰 숏폼 자동 생성기 (Google Sheets 기반)"
     )
-    parser.add_argument("--init", action="store_true", help="시트 초기 세팅")
-    parser.add_argument("--login", action="store_true", help="서비스 로그인만 수행")
-    parser.add_argument("--keywords", action="store_true", help="카테고리에서 토픽 키워드 발굴")
-    parser.add_argument("--keywords-and-run", action="store_true", help="키워드 발굴 후 바로 영상 생성")
+    parser.add_argument("--login", action="store_true", help="서비스 로그인만 수행 (최초 1회)")
     parser.add_argument("--headless", action="store_true", help="브라우저 숨김")
     args = parser.parse_args()
 
     if args.headless:
         config.HEADLESS = True
 
-    # Google Sheets 연결
+    # ===== Google Sheets 연결 =====
     log.info("Google Sheets 연결 중...")
     spreadsheet = sheet_manager.connect(config.GOOGLE_SHEET_URL)
     log.info("  시트 연결 완료: %s", spreadsheet.title)
 
-    if args.init:
-        log.info("시트 초기화 중...")
-        sheet_manager.init_sheet(spreadsheet)
-        log.info("시트 초기화 완료!")
-        log.info("  1. [설정] 탭에서 카테고리, 프로젝트 URL, 성우 이름 등을 입력")
-        log.info("  2. python main.py --keywords 로 토픽 키워드 자동 발굴")
-        log.info("  3. python main.py 로 영상 자동 생성")
-        return
+    # ===== 시트 자동 초기화 (탭이 없으면 생성) =====
+    sheet_manager.init_sheet(spreadsheet)
 
+    # ===== 설정 읽기 =====
     settings = sheet_manager.read_settings(spreadsheet)
     log.info("  카테고리: %s", settings.get("카테고리", "(미지정)") or "(미지정)")
-    log.info("  Claude 프로젝트: %s", settings.get("Claude 프로젝트 URL", "(없음)") or "(없음)")
-    log.info("  ChatGPT 프로젝트: %s", settings.get("ChatGPT 프로젝트 URL", "(없음)") or "(없음)")
     log.info("  성우: %s", settings.get("성우 이름", "(미지정)") or "(미지정)")
 
-    with BrowserManager() as browser:
-        if args.login:
+    # ===== 로그인 전용 모드 =====
+    if args.login:
+        with BrowserManager() as browser:
             login_all(browser)
-            return
+        return
 
-        if args.keywords or args.keywords_and_run:
-            discover_keywords(browser, spreadsheet, settings)
-            if not args.keywords_and_run:
-                return
+    # ===== 필수 설정 검증 =====
+    _validate_settings(settings)
 
-        # 영상 생성 전 필수 설정 검증
-        _validate_settings(settings)
-
+    with BrowserManager() as browser:
+        # 대기 작업 확인 → 없으면 자동으로 키워드 발굴
         pending = sheet_manager.get_pending_tasks(spreadsheet)
         if not pending:
-            log.info("처리할 '대기' 작업이 없습니다.")
-            log.info("  → [작업목록]에 주제 추가 후 상태를 '대기'로 설정하세요")
-            log.info("  → 또는 python main.py --keywords 로 자동 발굴하세요")
+            log.info("대기 작업이 없어 키워드를 자동 발굴합니다...")
+            _auto_discover_keywords(browser, spreadsheet, settings)
+            pending = sheet_manager.get_pending_tasks(spreadsheet)
+
+        if not pending:
+            log.error("키워드 발굴 후에도 대기 작업이 없습니다. 시트를 확인해주세요.")
             return
 
         log.info("처리할 작업: %d건", len(pending))
         for t in pending:
             log.info("  #%s %s", t["번호"], t["주제"])
 
+        # 작업 순서대로 처리
         for task in pending:
             log.info("")
             log.info("=" * 50)
