@@ -12,8 +12,11 @@ function setupAll() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
   setupSettingsTab(ss);
+  SpreadsheetApp.flush();
   setupTasksTab(ss);
+  SpreadsheetApp.flush();
   setupScriptTab(ss);
+  SpreadsheetApp.flush();
   removeDefaultSheet(ss);
 
   SpreadsheetApp.getUi().alert(
@@ -30,10 +33,10 @@ function setupAll() {
 // ════════════════════════════════════════
 
 function setupSettingsTab(ss) {
-  var sheet = getOrCreateSheet(ss, '설정', 20, 3);
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getOrCreateSheet(ss, '설정');
   sheet.clear();
 
-  // 데이터
   var data = [
     ['항목', '값', '설명'],
     ['카테고리', '', '필수. 영상 주제 카테고리 (예: 연애, 직장, 가족, 공포, 먹방)'],
@@ -53,54 +56,31 @@ function setupSettingsTab(ss) {
   sheet.getRange(1, 1, data.length, 3).setValues(data);
 
   // 헤더 서식
-  var headerRange = sheet.getRange('A1:C1');
-  headerRange.setBackground('#292833')
-             .setFontColor('#ffffff')
-             .setFontWeight('bold')
-             .setFontSize(10)
-             .setHorizontalAlignment('center')
-             .setVerticalAlignment('middle');
-  sheet.setRowHeight(1, 36);
-
-  // 항목명 열 (A열)
-  var lastRow = data.length;
-  sheet.getRange(2, 1, lastRow - 1, 1)
-       .setBackground('#EDEDF7')
+  sheet.getRange('A1:C1')
+       .setBackground('#292833')
+       .setFontColor('#ffffff')
        .setFontWeight('bold')
        .setFontSize(10)
-       .setVerticalAlignment('middle');
+       .setHorizontalAlignment('center');
 
-  // 필수 항목 강조 (카테고리=행2, 성우 이름=행6)
-  sheet.getRange('B2').setBackground('#FFF2E6');  // 카테고리
-  sheet.getRange('B6').setBackground('#FFF2E6');  // 성우 이름
+  // 항목명 열
+  sheet.getRange(2, 1, data.length - 1, 1)
+       .setBackground('#EDEDF7')
+       .setFontWeight('bold');
+
+  // 필수 항목 강조
+  sheet.getRange('B2').setBackground('#FFF2E6');
+  sheet.getRange('B6').setBackground('#FFF2E6');
 
   // 설명 열 서식
-  sheet.getRange(2, 3, lastRow - 1, 1)
+  sheet.getRange(2, 3, data.length - 1, 1)
        .setFontColor('#808080')
-       .setFontSize(9)
-       .setFontStyle('italic');
-
-  // 드롭다운 유효성 검사
-  var dropdowns = {
-    3: ['3', '5', '7', '10'],         // 키워드 개수 (행3)
-    8: ['3', '4', '5', '6', '7'],     // 장면 수 (행8)
-    12: ['capcut', 'skip'],            // 편집 모드 (행12)
-    13: ['Y', 'N'],                    // 대본 검토 (행13)
-    14: ['Y', 'N'],                    // 편집 검토 (행14)
-  };
-  for (var row in dropdowns) {
-    var rule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(dropdowns[row], true)
-      .build();
-    sheet.getRange(parseInt(row), 2).setDataValidation(rule);
-  }
+       .setFontSize(9);
 
   // 열 너비
   sheet.setColumnWidth(1, 180);
   sheet.setColumnWidth(2, 350);
   sheet.setColumnWidth(3, 380);
-
-  // 헤더 고정
   sheet.setFrozenRows(1);
 }
 
@@ -109,27 +89,19 @@ function setupSettingsTab(ss) {
 // ════════════════════════════════════════
 
 function setupTasksTab(ss) {
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
   var headers = ['번호', '주제', '상태', '제목', '장면수', '시작시간', '완료시간', '출력경로', '비고'];
-  var sheet = getOrCreateSheet(ss, '작업목록', 100, headers.length);
+  var sheet = getOrCreateSheet(ss, '작업목록');
   sheet.clear();
 
   // 헤더
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  var headerRange = sheet.getRange(1, 1, 1, headers.length);
-  headerRange.setBackground('#292833')
-             .setFontColor('#ffffff')
-             .setFontWeight('bold')
-             .setFontSize(10)
-             .setHorizontalAlignment('center')
-             .setVerticalAlignment('middle');
-  sheet.setRowHeight(1, 36);
-
-  // 데이터 영역 서식
-  sheet.getRange('A2:I100')
-       .setVerticalAlignment('middle')
-       .setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
-  sheet.getRange('A2:A100').setHorizontalAlignment('center');
-  sheet.getRange('C2:C100').setHorizontalAlignment('center');
+  sheet.getRange(1, 1, 1, headers.length)
+       .setBackground('#292833')
+       .setFontColor('#ffffff')
+       .setFontWeight('bold')
+       .setFontSize(10)
+       .setHorizontalAlignment('center');
 
   // 열 너비
   var widths = [50, 280, 120, 200, 100, 150, 150, 250, 200];
@@ -137,38 +109,12 @@ function setupTasksTab(ss) {
     sheet.setColumnWidth(i + 1, widths[i]);
   }
 
-  // 상태 열 드롭다운
+  // 상태 열 드롭다운 (20행만)
   var statusRule = SpreadsheetApp.newDataValidation()
     .requireValueInList(['대기', '진행중', '완료', '오류'], true)
     .build();
-  sheet.getRange('C2:C100').setDataValidation(statusRule);
+  sheet.getRange('C2:C20').setDataValidation(statusRule);
 
-  // 조건부 서식 (상태별 행 배경색)
-  var statusColors = [
-    { text: '대기',   color: '#D9EBFF' },
-    { text: '진행중', color: '#FFF5CC' },
-    { text: '완료',   color: '#D9FFD9' },
-    { text: '오류',   color: '#FFD9D9' },
-    { text: '1/4',    color: '#FFF5CC' },
-    { text: '2/4',    color: '#FFF5CC' },
-    { text: '3/4',    color: '#FFF5CC' },
-    { text: '4/4',    color: '#FFF5CC' },
-    { text: '검토',   color: '#F2E6FF' },
-  ];
-
-  var range = sheet.getRange('A2:I100');
-  var rules = sheet.getConditionalFormatRules();
-  statusColors.forEach(function(s) {
-    var rule = SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=SEARCH("' + s.text + '",$C2)')
-      .setBackground(s.color)
-      .setRanges([range])
-      .build();
-    rules.push(rule);
-  });
-  sheet.setConditionalFormatRules(rules);
-
-  // 헤더 고정
   sheet.setFrozenRows(1);
 }
 
@@ -177,29 +123,21 @@ function setupTasksTab(ss) {
 // ════════════════════════════════════════
 
 function setupScriptTab(ss) {
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
   var headers = ['장면번호', '컷번호', '나레이션', '자막', '이미지 프롬프트', '효과음', '장면전환', '이미지 상태', '음성 상태'];
-  var sheet = getOrCreateSheet(ss, '대본', 30, headers.length);
+  var sheet = getOrCreateSheet(ss, '대본');
   sheet.clear();
 
   // 헤더
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  var headerRange = sheet.getRange(1, 1, 1, headers.length);
-  headerRange.setBackground('#292833')
-             .setFontColor('#ffffff')
-             .setFontWeight('bold')
-             .setFontSize(10)
-             .setHorizontalAlignment('center')
-             .setVerticalAlignment('middle');
-  sheet.setRowHeight(1, 36);
+  sheet.getRange(1, 1, 1, headers.length)
+       .setBackground('#292833')
+       .setFontColor('#ffffff')
+       .setFontWeight('bold')
+       .setFontSize(10)
+       .setHorizontalAlignment('center');
 
-  // 데이터 영역 서식
-  sheet.getRange('A2:I30')
-       .setVerticalAlignment('top')
-       .setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
-  sheet.getRange('A2:B30').setHorizontalAlignment('center');
-  sheet.getRange('H2:I30').setHorizontalAlignment('center');
-
-  // 수정 가능 영역 배경 (나레이션 ~ 장면전환: C~G열)
+  // 수정 가능 영역 배경
   sheet.getRange('C2:G30').setBackground('#FFFFF2');
 
   // 열 너비
@@ -208,20 +146,6 @@ function setupScriptTab(ss) {
     sheet.setColumnWidth(i + 1, widths[i]);
   }
 
-  // 조건부 서식: 상태 "완료" → 녹색
-  var scriptRules = sheet.getConditionalFormatRules();
-  ['H2:H30', 'I2:I30'].forEach(function(rangeStr) {
-    var r = sheet.getRange(rangeStr);
-    var rule = SpreadsheetApp.newConditionalFormatRule()
-      .whenTextEqualTo('완료')
-      .setBackground('#D9FFD9')
-      .setRanges([r])
-      .build();
-    scriptRules.push(rule);
-  });
-  sheet.setConditionalFormatRules(scriptRules);
-
-  // 헤더 고정
   sheet.setFrozenRows(1);
 }
 
@@ -229,10 +153,10 @@ function setupScriptTab(ss) {
 // 유틸리티
 // ════════════════════════════════════════
 
-function getOrCreateSheet(ss, name, rows, cols) {
+function getOrCreateSheet(ss, name) {
   var sheet = ss.getSheetByName(name);
   if (sheet) return sheet;
-  return ss.insertSheet(name, ss.getSheets().length, { template: null });
+  return ss.insertSheet(name);
 }
 
 function removeDefaultSheet(ss) {
