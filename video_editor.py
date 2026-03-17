@@ -2,39 +2,14 @@
 
 CapCut Pro 구독의 웹 에디터를 Playwright로 자동화합니다.
 이미지, 음성, 자막, 효과음, 장면전환을 타임라인에 배치하고 최종 영상을 내보냅니다.
+
+효과음/전환 이름은 CapCut에 있는 이름을 시트에 그대로 적으면 됩니다.
 """
 
 import os
 from playwright.sync_api import Page
 import config
 from browser_manager import ensure_login
-
-
-# ── CapCut 장면 전환 효과 매핑 ──
-# 대본의 transition 값 → CapCut UI에서 검색할 키워드
-TRANSITION_MAP = {
-    "fade": "Fade",
-    "slide_left": "Slide Left",
-    "slide_up": "Slide Up",
-    "zoom_in": "Zoom",
-    "glitch": "Glitch",
-    "flash": "Flash",
-    "none": None,
-}
-
-# ── CapCut 효과음 매핑 ──
-# 대본의 sfx 값 → CapCut 오디오 라이브러리 검색 키워드
-SFX_SEARCH_MAP = {
-    "whoosh": "whoosh",
-    "impact": "impact hit",
-    "ding": "ding notification",
-    "pop": "pop bubble",
-    "dramatic": "dramatic tension",
-    "heartbeat": "heartbeat",
-    "laugh": "laugh",
-    "crickets": "crickets silence",
-    "none": None,
-}
 
 
 def create_project(page: Page, title: str) -> None:
@@ -85,7 +60,7 @@ def add_to_timeline(page: Page, asset_index: int) -> None:
 
 
 def add_subtitle(page: Page, text: str) -> None:
-    """자막(나레이션 텍스트)을 추가합니다."""
+    """자막을 추가합니다."""
     text_btn = page.locator(
         'button:has-text("텍스트"), button:has-text("Text"), '
         '[data-testid="text-tool"]'
@@ -112,10 +87,12 @@ def add_subtitle(page: Page, text: str) -> None:
         page.wait_for_timeout(500)
 
 
-def add_transition(page: Page, transition_type: str) -> None:
-    """두 클립 사이에 장면 전환 효과를 추가합니다."""
-    search_keyword = TRANSITION_MAP.get(transition_type)
-    if not search_keyword:
+def add_transition(page: Page, name: str) -> None:
+    """두 클립 사이에 장면 전환 효과를 추가합니다.
+
+    name: CapCut에 있는 전환 효과 이름 그대로 (예: "페이드", "Fade", "글리치" 등)
+    """
+    if not name:
         return
 
     # 전환 효과 패널 열기
@@ -128,30 +105,32 @@ def add_transition(page: Page, transition_type: str) -> None:
     transition_btn.click()
     page.wait_for_timeout(1000)
 
-    # 전환 효과 검색
+    # CapCut에서 이름 그대로 검색
     search_input = page.locator(
         'input[placeholder*="검색"], input[placeholder*="Search"], '
         'input[type="search"]'
     ).first
     if search_input.is_visible():
         search_input.click()
-        search_input.fill(search_keyword)
+        search_input.fill(name)
         page.wait_for_timeout(1500)
 
-    # 첫 번째 결과를 타임라인의 클립 사이에 적용
+    # 첫 번째 결과 적용
     transition_items = page.locator(
         '.transition-item, [data-testid="transition-item"]'
     ).all()
     if transition_items:
-        transition_items[0].dblclick()  # 더블클릭으로 적용
+        transition_items[0].dblclick()
         page.wait_for_timeout(500)
-        print(f"      전환 효과: {transition_type}")
+        print(f"      전환: {name}")
 
 
-def add_sfx(page: Page, sfx_type: str) -> None:
-    """현재 타임라인 위치에 효과음을 추가합니다."""
-    search_keyword = SFX_SEARCH_MAP.get(sfx_type)
-    if not search_keyword:
+def add_sfx(page: Page, name: str) -> None:
+    """현재 타임라인 위치에 효과음을 추가합니다.
+
+    name: CapCut에 있는 효과음 이름 그대로 (예: "타격", "우쉬", "Whoosh" 등)
+    """
+    if not name:
         return
 
     # 오디오 패널 열기
@@ -173,24 +152,24 @@ def add_sfx(page: Page, sfx_type: str) -> None:
         sfx_tab.click()
         page.wait_for_timeout(1000)
 
-    # 효과음 검색
+    # CapCut에서 이름 그대로 검색
     search_input = page.locator(
         'input[placeholder*="검색"], input[placeholder*="Search"], '
         'input[type="search"]'
     ).first
     if search_input.is_visible():
         search_input.click()
-        search_input.fill(search_keyword)
+        search_input.fill(name)
         page.wait_for_timeout(1500)
 
-    # 첫 번째 결과를 타임라인에 추가
+    # 첫 번째 결과 적용
     sfx_items = page.locator(
         '.audio-item, [data-testid="audio-item"], .sound-item'
     ).all()
     if sfx_items:
         sfx_items[0].dblclick()
         page.wait_for_timeout(500)
-        print(f"      효과음: {sfx_type}")
+        print(f"      효과음: {name}")
 
 
 def export_video(page: Page, output_path: str) -> str:
@@ -246,17 +225,7 @@ def assemble_video(
     output_path: str,
     auto_export: bool = False,
 ) -> str:
-    """CapCut 웹에서 전체 영상을 조합합니다.
-
-    1. 새 프로젝트 생성 (9:16)
-    2. 모든 에셋 업로드
-    3. 타임라인에 컷 순서대로 배치
-    4. 장면 전환 효과 적용
-    5. 자막 추가 (나레이션 텍스트 = 자막)
-    6. 효과음 배치
-    7. 검토 대기 (auto_export=False일 때)
-    8. 내보내기
-    """
+    """CapCut 웹에서 전체 영상을 조합합니다."""
     print("  CapCut 프로젝트 생성...")
     create_project(page, script["title"])
 
@@ -265,37 +234,36 @@ def assemble_video(
     all_files = image_paths + voice_paths
     upload_assets(page, all_files)
 
-    # ===== 타임라인에 컷 배치 + 전환 + 효과음 =====
+    # ===== 타임라인에 컷 배치 + 자막 + 전환 + 효과음 =====
     print(f"  타임라인 구성 중... (이미지 {len(image_paths)}장)")
     cut_index = 0
     for scene_idx, scene in enumerate(script["scenes"]):
         scene_num = scene["scene_number"]
-        cuts = scene.get("cuts", [{"cut_number": 1, "sfx": "none"}])
-        transition = scene.get("transition", "fade")
+        cuts = scene.get("cuts", [{"cut_number": 1, "sfx": "", "subtitle": ""}])
+        transition = scene.get("transition", "")
 
-        # 장면 전환 효과 (첫 장면 제외)
-        if scene_idx > 0 and transition != "none":
+        # 장면 전환 효과 (첫 장면 제외, 이름이 있을 때만)
+        if scene_idx > 0 and transition:
             add_transition(page, transition)
 
         for cut in cuts:
             cut_num = cut.get("cut_number", 1)
-            sfx = cut.get("sfx", "none")
+            sfx = cut.get("sfx", "")
+            subtitle = cut.get("subtitle", "")
 
             print(f"    장면 {scene_num} 컷 {cut_num} 배치...")
             add_to_timeline(page, cut_index)
             page.wait_for_timeout(500)
 
-            # 효과음 배치
-            if sfx and sfx != "none":
+            # 자막 (컷에 자막이 있으면 추가)
+            if subtitle:
+                add_subtitle(page, subtitle)
+
+            # 효과음 (이름이 있으면 CapCut에서 검색하여 추가)
+            if sfx:
                 add_sfx(page, sfx)
 
             cut_index += 1
-
-        # 자막 = 나레이션 텍스트 그대로
-        narration = scene.get("narration", "")
-        if narration:
-            add_subtitle(page, narration)
-        page.wait_for_timeout(500)
 
     # 음성 트랙 추가 (장면당 1개)
     print(f"  음성 트랙 배치 중... ({len(voice_paths)}개)")
@@ -313,7 +281,6 @@ def assemble_video(
         print("    - 효과음 타이밍 미세 조정")
         print("    - 자막 위치/크기/스타일 수정")
         print("    - 배경음악 추가")
-        print("    - 기타 미세 조정")
         print("")
         print("  수정 완료 후 Enter를 눌러주세요. (내보내기 진행)")
         print("=" * 50)
