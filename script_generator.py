@@ -1,68 +1,103 @@
-"""Claude API를 사용한 웹툰 대본 생성 모듈"""
+"""Claude 웹(claude.ai)을 사용한 웹툰 대본 생성 모듈
+
+Claude Pro 구독의 웹 인터페이스를 Playwright로 자동화합니다.
+"""
 
 import json
-import anthropic
+import re
+from playwright.sync_api import Page
 import config
+from browser_manager import ensure_login
 
 
-SYSTEM_PROMPT = """당신은 웹툰 숏폼 영상 대본 작가입니다.
-주어진 주제로 25~40초 분량의 웹툰 스타일 숏폼 대본을 작성합니다.
+PROMPT_TEMPLATE = """웹툰 숏폼 영상 대본을 작성해줘.
 
-반드시 아래 JSON 형식으로만 응답하세요:
-{
+주제: {topic}
+
+반드시 아래 JSON 형식으로만 응답해:
+```json
+{{
   "title": "영상 제목",
   "scenes": [
-    {
+    {{
       "scene_number": 1,
-      "narration": "이 장면의 나레이션 텍스트 (한국어, 1~2문장)",
-      "image_prompt": "이 장면을 묘사하는 영어 이미지 생성 프롬프트 (webtoon style, manhwa art style 포함)",
-      "subtitle": "자막 텍스트 (짧고 임팩트 있게)",
-      "duration_sec": 5
-    }
+      "narration": "나레이션 텍스트 (한국어, 1~2문장)",
+      "image_prompt": "DALL-E용 영어 이미지 프롬프트 (webtoon style, manhwa art 포함)",
+      "subtitle": "자막 (짧고 임팩트 있게)"
+    }}
   ]
-}
+}}
+```
 
 규칙:
-- 장면은 4~6개로 구성
-- 각 장면의 나레이션은 읽는데 4~7초 소요되도록 작성
-- 전체 나레이션 합산이 25~40초가 되도록 조절
-- image_prompt는 영어로 작성하며, 반드시 "webtoon style, manhwa art, digital illustration" 키워드를 포함
-- image_prompt에 텍스트/글자/말풍선 묘사를 넣지 마세요
-- 각 장면이 시각적으로 구분되고 이야기 흐름이 자연스럽게 이어지도록 작성
-- 자막은 시청자의 시선을 끄는 핵심 문구로 작성
-- JSON 외에 다른 텍스트를 출력하지 마세요"""
+- 장면 4~6개
+- 각 나레이션은 읽는데 4~7초
+- 전체 25~40초 분량
+- image_prompt는 영어, "webtoon style, manhwa art, digital illustration" 필수 포함
+- image_prompt에 텍스트/말풍선 묘사 금지
+- JSON만 출력"""
 
 
-def generate_script(topic: str) -> dict:
-    """주제를 받아 웹툰 숏폼 대본을 생성합니다."""
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+def generate_script(page: Page, topic: str) -> dict:
+    """Claude 웹에서 대본을 생성합니다."""
+    ensure_login(page, config.CLAUDE_URL, "Claude")
 
-    message = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=2000,
-        messages=[
-            {
-                "role": "user",
-                "content": f"다음 주제로 웹툰 숏폼 대본을 작성해주세요: {topic}",
-            }
-        ],
-        system=SYSTEM_PROMPT,
-    )
+    # 새 대화 시작
+    page.goto(f"{config.CLAUDE_URL}/new", wait_until="domcontentloaded")
+    page.wait_for_timeout(3000)
 
-    response_text = message.content[0].text
-    # JSON 파싱 (코드 블록으로 감싸진 경우 처리)
-    if "```json" in response_text:
-        response_text = response_text.split("```json")[1].split("```")[0]
-    elif "```" in response_text:
-        response_text = response_text.split("```")[1].split("```")[0]
+    # 프롬프트 입력
+    prompt = PROMPT_TEMPLATE.format(topic=topic)
+    editor = page.locator('[contenteditable="true"]').first
+    editor.wait_for(timeout=10000)
+    editor.click()
+    editor.fill(prompt)
+    page.wait_for_timeout(500)
 
-    script = json.loads(response_text.strip())
+    # 전송
+    send_button = page.locator('button[aria-label="Send Message"]').first
+    if send_button.is_visible():
+        send_button.click()
+    else:
+        editor.press("Enter")
+
+    # 응답 대기 (Claude가 응답을 완료할 때까지)
+    print("  Claude 응답 대기 중...")
+    page.wait_for_timeout(5000)
+
+    # 응답 완료 감지: 전송 버튼이 다시 활성화될 때까지 대기
+    for _ in range(120):  # 최대 2분
+        page.wait_for_timeout(1000)
+        # 스트리밍이 끝나면 "Stop" 버튼이 사라지고 입력 가능 상태가 됨
+        stop_btn = page.locator('button[aria-label="Stop Response"]')
+        if not stop_btn.is_visible():
+            break
+    page.wait_for_timeout(2000)
+
+    # 응답 텍스트 추출
+    response_blocks = page.locator("[data-message-author-role='assistant']").all()
+    if not response_blocks:
+        # 대체 선택자
+        response_blocks = page.locator(".font-claude-message").all()
+
+    full_response = ""
+    for block in response_blocks:
+        full_response += block.inner_text() + "\n"
+
+    if not full_response.strip():
+        raise RuntimeError("Claude 응답을 가져올 수 없습니다")
+
+    # JSON 파싱
+    json_match = re.search(r"```json\s*(.*?)\s*```", full_response, re.DOTALL)
+    if json_match:
+        json_str = json_match.group(1)
+    else:
+        json_match = re.search(r"\{[\s\S]*\"scenes\"[\s\S]*\}", full_response)
+        if json_match:
+            json_str = json_match.group(0)
+        else:
+            raise ValueError(f"JSON을 찾을 수 없습니다. 응답:\n{full_response[:500]}")
+
+    script = json.loads(json_str)
+    print(f"  대본 생성 완료: {script['title']} ({len(script['scenes'])}장면)")
     return script
-
-
-if __name__ == "__main__":
-    import sys
-
-    topic = sys.argv[1] if len(sys.argv) > 1 else "직장인의 월요일 아침"
-    result = generate_script(topic)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
