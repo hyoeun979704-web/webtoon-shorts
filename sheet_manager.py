@@ -61,7 +61,13 @@ def connect(spreadsheet_url: str) -> gspread.Spreadsheet:
       2. OAuth (credentials.json → authorized_user.json)
     """
     sa_file = os.getenv("SERVICE_ACCOUNT_FILE", "")
-    sa_paths = [sa_file, "service_account.json", os.path.expanduser("~/.config/gspread/service_account.json")]
+    _here = os.path.dirname(os.path.abspath(__file__))
+    sa_paths = [
+        sa_file,
+        os.path.join(_here, "service_account.json"),
+        "service_account.json",
+        os.path.expanduser("~/.config/gspread/service_account.json"),
+    ]
 
     for path in sa_paths:
         if path and os.path.isfile(path):
