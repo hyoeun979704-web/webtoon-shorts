@@ -151,6 +151,7 @@ def assemble_video(
     image_paths: list[str],
     voice_paths: list[str],
     output_path: str,
+    auto_export: bool = False,
 ) -> str:
     """CapCut 웹에서 전체 영상을 조합합니다.
 
@@ -158,7 +159,8 @@ def assemble_video(
     2. 모든 이미지, 음성 파일 업로드
     3. 타임라인에 순서대로 배치
     4. 자막 추가
-    5. 내보내기
+    5. 검토 대기 (auto_export=False일 때)
+    6. 내보내기
     """
     print("  CapCut 프로젝트 생성...")
     create_project(page, script["title"])
@@ -187,6 +189,21 @@ def assemble_video(
     for i in range(len(voice_paths)):
         add_to_timeline(page, len(image_paths) + i)
         page.wait_for_timeout(500)
+
+    # ===== 검토 포인트: CapCut에서 직접 확인/수정 =====
+    if not auto_export:
+        print("\n" + "=" * 50)
+        print("  CapCut 타임라인 배치가 완료되었습니다.")
+        print("  브라우저에서 직접 확인하고 수정하세요:")
+        print("    - 장면 순서, 길이 조정")
+        print("    - 전환 효과 추가")
+        print("    - 자막 위치/스타일 수정")
+        print("    - 배경음악 추가")
+        print("    - 기타 미세 조정")
+        print("")
+        print("  수정 완료 후 Enter를 눌러주세요. (내보내기 진행)")
+        print("=" * 50)
+        input("  → Enter: ")
 
     # 내보내기
     print("  영상 내보내기 중...")

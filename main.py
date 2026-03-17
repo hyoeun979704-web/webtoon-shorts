@@ -91,7 +91,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
     # 설정 읽기
     actor_name = settings.get("성우 이름", "")
     edit_mode = settings.get("편집 모드", "capcut").strip().lower()
-    auto_approve = settings.get("자동 대본 승인", "N").strip().upper() == "Y"
+    review_script = settings.get("대본 검토", "Y").strip().upper() == "Y"
+    review_edit = settings.get("편집 검토", "Y").strip().upper() == "Y"
     claude_project = settings.get("Claude 프로젝트 URL", "").strip()
     chatgpt_project = settings.get("ChatGPT 프로젝트 URL", "").strip()
     image_style = settings.get("이미지 스타일", "webtoon style, manhwa art, digital illustration")
@@ -133,17 +134,30 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
         print(f"  제목: {script['title']} ({len(script['scenes'])}장면)")
 
-        # 대본 확인/수정
-        if not auto_approve:
+        # ===== 검토 포인트 1: 대본 검토 =====
+        if review_script:
+            sheet_manager.update_task_status(spreadsheet, row, "대본 검토 대기")
             print("\n" + "=" * 50)
-            print("  [대본] 탭에서 나레이션/프롬프트를 확인·수정하세요.")
+            print("  [대본 검토] Google Sheets [대본] 탭을 확인하세요.")
+            print("")
+            print("  수정 가능 항목:")
+            print("    - 나레이션 텍스트")
+            print("    - 이미지 프롬프트")
+            print("    - 자막")
+            print("")
             print("  수정 완료 후 Enter를 눌러주세요.")
+            print("  (수정 없이 바로 진행하려면 그냥 Enter)")
             print("=" * 50)
             input("  → Enter: ")
+
+            # 수정된 대본 다시 읽기
             edited = sheet_manager.read_script_from_sheet(spreadsheet)
             if edited and edited["scenes"]:
                 edited["title"] = script["title"]
                 script = edited
+                # 수정된 대본 로컬에도 반영
+                with open(script_path, "w", encoding="utf-8") as f:
+                    json.dump(script, f, ensure_ascii=False, indent=2)
                 print("  시트에서 수정된 대본을 반영했습니다.")
 
         # ===== 2단계: 이미지 생성 (ChatGPT 프로젝트 + DALL-E) =====
@@ -209,9 +223,22 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
             capcut_page = browser.new_page()
             output_video = os.path.join(project_dir, f"{script['title']}.mp4")
+
+            if review_edit:
+                sheet_manager.update_task_status(spreadsheet, row, "4/4 편집 배치중")
+
             assemble_video(
-                capcut_page, script, image_paths, voice_paths, output_video
+                capcut_page,
+                script,
+                image_paths,
+                voice_paths,
+                output_video,
+                auto_export=not review_edit,
             )
+
+            if review_edit:
+                sheet_manager.update_task_status(spreadsheet, row, "4/4 내보내기중")
+
             capcut_page.close()
 
             sheet_manager.update_task_status(
