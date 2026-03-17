@@ -38,8 +38,8 @@ TASK_HEADERS = [
 
 # ── 대본 탭 헤더 ──
 SCRIPT_HEADERS = [
-    "장면번호", "컷번호", "나레이션", "이미지 프롬프트", "자막",
-    "이미지 상태", "음성 상태",
+    "장면번호", "컷번호", "나레이션", "이미지 프롬프트",
+    "효과음", "장면전환", "이미지 상태", "음성 상태",
 ]
 
 
@@ -82,7 +82,7 @@ def init_sheet(spreadsheet: gspread.Spreadsheet) -> None:
     if TAB_SCRIPT not in existing:
         ws = spreadsheet.add_worksheet(TAB_SCRIPT, rows=30, cols=len(SCRIPT_HEADERS))
         ws.update(range_name="A1", values=[SCRIPT_HEADERS])
-        ws.format("A1:G1", {"textFormat": {"bold": True}})
+        ws.format("A1:H1", {"textFormat": {"bold": True}})
         print(f"  [{TAB_SCRIPT}] 탭 생성 완료")
     else:
         print(f"  [{TAB_SCRIPT}] 탭 이미 존재")
@@ -211,8 +211,9 @@ def write_script_to_sheet(
     for scene in script["scenes"]:
         cuts = scene.get("cuts", [])
         if not cuts:
-            # 하위 호환: 컷이 없으면 image_prompt를 단일 컷으로
-            cuts = [{"cut_number": 1, "image_prompt": scene.get("image_prompt", "")}]
+            cuts = [{"cut_number": 1, "image_prompt": scene.get("image_prompt", ""), "sfx": "none"}]
+
+        transition = scene.get("transition", "fade")
 
         for i, cut in enumerate(cuts):
             rows.append([
@@ -220,9 +221,10 @@ def write_script_to_sheet(
                 cut["cut_number"],
                 scene["narration"] if i == 0 else "",      # 나레이션은 첫 컷에만
                 cut["image_prompt"],
-                scene.get("subtitle", "") if i == 0 else "",  # 자막도 첫 컷에만
+                cut.get("sfx", "none"),                    # 효과음
+                transition if i == 0 else "",              # 장면전환은 첫 컷에만
                 "",  # 이미지 상태
-                "",  # 음성 상태 (첫 컷에만 의미)
+                "",  # 음성 상태
             ])
     if rows:
         ws.update(range_name="A2", values=rows)
@@ -250,20 +252,20 @@ def read_script_from_sheet(spreadsheet: gspread.Spreadsheet) -> dict | None:
             scenes_map[scene_num] = {
                 "scene_number": scene_num,
                 "narration": rec.get("나레이션", ""),
-                "subtitle": rec.get("자막", ""),
+                "transition": rec.get("장면전환", "fade"),
                 "cuts": [],
             }
 
         scenes_map[scene_num]["cuts"].append({
             "cut_number": cut_num,
             "image_prompt": rec.get("이미지 프롬프트", ""),
+            "sfx": rec.get("효과음", "none"),
         })
 
-        # 나레이션/자막이 비어있으면 첫 컷에서 가져온 값 유지
         if rec.get("나레이션", "").strip():
             scenes_map[scene_num]["narration"] = rec["나레이션"]
-        if rec.get("자막", "").strip():
-            scenes_map[scene_num]["subtitle"] = rec["자막"]
+        if rec.get("장면전환", "").strip():
+            scenes_map[scene_num]["transition"] = rec["장면전환"]
 
     scenes = [scenes_map[k] for k in sorted(scenes_map)]
     return {"title": "", "scenes": scenes}
@@ -282,6 +284,6 @@ def update_script_cut_status(
     """
     ws = spreadsheet.worksheet(TAB_SCRIPT)
     if image_status:
-        ws.update_cell(sheet_row, 6, image_status)  # F열
+        ws.update_cell(sheet_row, 7, image_status)  # G열
     if voice_status:
-        ws.update_cell(sheet_row, 7, voice_status)  # G열
+        ws.update_cell(sheet_row, 8, voice_status)  # H열

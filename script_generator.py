@@ -24,19 +24,12 @@ PROMPT_TEMPLATE = """웹툰 숏폼 영상 대본을 작성해줘.
     {{
       "scene_number": 1,
       "narration": "나레이션 텍스트 (한국어, 1~2문장, 감정과 리듬감 있게)",
-      "subtitle": "자막 (핵심 한마디, 8자 이내)",
+      "transition": "장면 전환 효과 (fade/slide_left/slide_up/zoom_in/glitch/flash/none)",
       "cuts": [
         {{
           "cut_number": 1,
-          "image_prompt": "DALL-E용 영어 이미지 프롬프트 (상세한 구도, 표정, 분위기)"
-        }},
-        {{
-          "cut_number": 2,
-          "image_prompt": "같은 장면의 다른 앵글/순간 묘사"
-        }},
-        {{
-          "cut_number": 3,
-          "image_prompt": "감정이 고조되는 클로즈업 등"
+          "image_prompt": "DALL-E용 영어 이미지 프롬프트",
+          "sfx": "효과음 (whoosh/impact/ding/pop/dramatic/heartbeat/silence/none)"
         }}
       ]
     }}
@@ -48,11 +41,42 @@ PROMPT_TEMPLATE = """웹툰 숏폼 영상 대본을 작성해줘.
 - 장면 {scene_count}개 구성
 - 각 장면당 컷(이미지) {cuts_per_scene}개씩, 총 이미지 {total_images}장
 - 웹툰처럼 한 장면 안에서 컷이 빠르게 전환되는 구성
-- 컷 구성 예시:
-  - 컷1: 상황 설정 (와이드샷)
-  - 컷2: 인물 반응 (미디엄샷/클로즈업)
-  - 컷3: 감정 강조 (익스트림 클로즈업/리액션)
-  - 컷4: 결과/반전 (새로운 앵글)
+
+자막 규칙:
+- 자막은 기본적으로 나레이션 텍스트를 그대로 표시
+- 별도 자막 필드 불필요 (나레이션 = 자막)
+
+효과음(sfx) 규칙:
+- 모든 컷에 효과음을 넣지 말 것. 임팩트 있는 순간에만 배치
+- 사용 가능한 효과음:
+  - "whoosh": 빠른 전환, 등장
+  - "impact": 충격, 반전, 강조
+  - "ding": 깨달음, 아이디어
+  - "pop": 가벼운 등장, 말풍선 느낌
+  - "dramatic": 긴장감, 클라이맥스
+  - "heartbeat": 두근두근, 긴장
+  - "laugh": 웃김 포인트
+  - "crickets": 어색한 정적
+  - "none": 효과음 없음
+- 전체 컷의 30~50%만 효과음 배치 (나머지는 "none")
+
+장면 전환(transition) 규칙:
+- 장면 사이 전환 효과. 분위기에 맞게 선택:
+  - "fade": 부드러운 전환 (기본, 일반적인 흐름)
+  - "slide_left": 좌로 슬라이드 (시간 경과, 장소 이동)
+  - "slide_up": 위로 슬라이드 (숏폼 특유의 빠른 전환)
+  - "zoom_in": 줌인 (긴장감, 강조)
+  - "glitch": 글리치 (반전, 충격)
+  - "flash": 번쩍 (깨달음, 기억)
+  - "none": 첫 장면 또는 전환 없음
+
+컷 구성 예시:
+  - 컷1: 상황 설정 (와이드샷) + sfx: "none"
+  - 컷2: 인물 반응 (미디엄샷) + sfx: "whoosh"
+  - 컷3: 감정 강조 (클로즈업) + sfx: "impact"
+  - 컷4: 결과/반전 (새로운 앵글) + sfx: "none"
+
+기타 규칙:
 - 첫 장면은 반드시 강렬한 훅 (시청자 이탈 방지)
 - 마지막 장면은 반전 또는 여운이 있는 마무리
 - 나레이션은 구어체로, 읽는데 4~7초
@@ -61,9 +85,8 @@ PROMPT_TEMPLATE = """웹툰 숏폼 영상 대본을 작성해줘.
   - 영어로 작성
   - "{image_style}" 키워드 필수 포함
   - 캐릭터 외형을 일관되게 묘사 (같은 인물은 같은 특징 반복)
-  - 구도(extreme close-up, medium shot, wide shot, bird's eye 등), 조명, 표정을 구체적으로
+  - 구도(extreme close-up, medium shot, wide shot 등), 조명, 표정을 구체적으로
   - 텍스트/글자/말풍선 묘사 절대 금지
-- 자막은 임팩트 있는 핵심 문구, 초성체 가능
 - JSON만 출력"""
 
 
@@ -72,7 +95,6 @@ def _navigate_to_project_or_new(page: Page, project_url: str = ""):
     if project_url:
         page.goto(project_url, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
-        # 프로젝트 내 새 대화 시작
         new_chat_btn = page.locator(
             'button:has-text("New chat"), button:has-text("새 대화"), '
             'a[href*="/new"]'
@@ -109,7 +131,6 @@ def _send_and_wait(page: Page, prompt: str) -> str:
             break
     page.wait_for_timeout(2000)
 
-    # 응답 추출
     response_blocks = page.locator("[data-message-author-role='assistant']").all()
     if not response_blocks:
         response_blocks = page.locator(".font-claude-message").all()
@@ -133,17 +154,7 @@ def generate_script(
     cuts_per_scene: str = "3~4",
     total_images: str = "15~20",
 ) -> dict:
-    """Claude 프로젝트에서 대본을 생성합니다.
-
-    Args:
-        page: Playwright 페이지
-        topic: 영상 주제
-        project_url: Claude 프로젝트 URL (프로젝트의 시스템 프롬프트가 적용됨)
-        image_style: 이미지 스타일 키워드
-        scene_count: 장면 수
-        cuts_per_scene: 장면당 컷 수 (예: "3~4")
-        total_images: 총 이미지 수 (예: "15~20")
-    """
+    """Claude 프로젝트에서 대본을 생성합니다."""
     ensure_login(page, config.CLAUDE_URL, "Claude")
     _navigate_to_project_or_new(page, project_url)
 
@@ -162,7 +173,6 @@ def generate_script(
 
     response = _send_and_wait(page, prompt)
 
-    # JSON 파싱
     json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
     if json_match:
         json_str = json_match.group(1)
@@ -175,5 +185,10 @@ def generate_script(
 
     script = json.loads(json_str)
     total_cuts = sum(len(s.get("cuts", [])) for s in script["scenes"])
-    print(f"  대본 생성 완료: {script['title']} ({len(script['scenes'])}장면, {total_cuts}컷)")
+    sfx_count = sum(
+        1 for s in script["scenes"]
+        for c in s.get("cuts", [])
+        if c.get("sfx", "none") != "none"
+    )
+    print(f"  대본 생성 완료: {script['title']} ({len(script['scenes'])}장면, {total_cuts}컷, 효과음 {sfx_count}개)")
     return script
