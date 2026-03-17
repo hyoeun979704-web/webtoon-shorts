@@ -26,18 +26,25 @@ from video_editor import assemble_video
 from utils import log
 
 
-def login_all(browser: BrowserManager):
-    """모든 서비스에 미리 로그인합니다."""
+def login_all(browser: BrowserManager, settings: dict = None):
+    """모든 서비스에 미리 로그인합니다.
+
+    settings에 서비스별 계정 정보가 있으면 로그인 시 안내합니다.
+    """
     services = [
-        (config.CLAUDE_URL, "Claude"),
-        (config.CHATGPT_URL, "ChatGPT"),
-        (config.TYPECAST_URL, "Typecast"),
-        (config.CAPCUT_URL, "CapCut"),
+        (config.CLAUDE_URL, "Claude", "Claude 계정"),
+        (config.CHATGPT_URL, "ChatGPT", "ChatGPT 계정"),
+        (config.TYPECAST_URL, "Typecast", "Typecast 계정"),
+        (config.CAPCUT_URL, "CapCut", "CapCut 계정"),
     ]
     page = browser.new_page()
-    for url, name in services:
-        log.info("%s 로그인 확인 중...", name)
-        ensure_login(page, url, name)
+    for url, name, account_key in services:
+        account = (settings or {}).get(account_key, "").strip()
+        if account:
+            log.info("%s 로그인 확인 중... (계정: %s)", name, account)
+        else:
+            log.info("%s 로그인 확인 중...", name)
+        ensure_login(page, url, name, account_hint=account)
         log.info("  %s 로그인 완료!", name)
     page.close()
     log.info("모든 서비스 로그인 완료!")
@@ -329,16 +336,18 @@ def main():
     log.info("  카테고리: %s", settings.get("카테고리", "(미지정)") or "(미지정)")
     log.info("  성우: %s", settings.get("성우 이름", "(미지정)") or "(미지정)")
 
-    # ===== 로그인 전용 모드 =====
-    if args.login:
-        with BrowserManager() as browser:
-            login_all(browser)
-        return
-
-    # ===== 필수 설정 검증 =====
-    _validate_settings(settings)
-
     with BrowserManager() as browser:
+        # ===== 로그인 (항상 확인) =====
+        login_all(browser, settings)
+
+        # ===== 로그인 전용 모드 =====
+        if args.login:
+            log.info("로그인 전용 모드 - 작업 없이 종료합니다.")
+            return
+
+        # ===== 필수 설정 검증 =====
+        _validate_settings(settings)
+
         # 대기 작업 확인 → 없으면 자동으로 키워드 발굴
         pending = sheet_manager.get_pending_tasks(spreadsheet)
         if not pending:

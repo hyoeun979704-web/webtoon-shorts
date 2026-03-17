@@ -69,7 +69,7 @@ class BrowserManager:
         self.close()
 
 
-def ensure_login(page: Page, service_url: str, service_name: str):
+def ensure_login(page: Page, service_url: str, service_name: str, account_hint: str = ""):
     """서비스에 로그인 상태인지 확인하고, 아니면 사용자에게 수동 로그인을 요청합니다."""
     page.goto(service_url, wait_until="domcontentloaded", timeout=30000)
     page.wait_for_timeout(3000)
@@ -81,6 +81,8 @@ def ensure_login(page: Page, service_url: str, service_name: str):
         log.info("")
         log.info("=" * 50)
         log.info("  %s 로그인이 필요합니다!", service_name)
+        if account_hint:
+            log.info("  → 사용할 계정: %s", account_hint)
         log.info("  브라우저 창에서 직접 로그인해주세요.")
         log.info("  로그인 완료 후 Enter를 눌러주세요.")
         log.info("=" * 50)
