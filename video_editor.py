@@ -51,13 +51,14 @@ def upload_assets(page: Page, file_paths: list[str]) -> None:
     if not valid_files:
         raise FileNotFoundError("업로드할 에셋 파일이 없습니다")
 
-    for abs_path in valid_files:
-        upload_input.set_input_files(abs_path)
-        page.wait_for_timeout(2000)
-        log.info("    업로드: %s", os.path.basename(abs_path))
+    # 한 번에 모든 파일을 선택하여 업로드 (set_input_files는 매번 선택을 교체하므로)
+    upload_input.set_input_files(valid_files)
+    log.info("    %d개 파일 업로드 시작", len(valid_files))
 
-    # 모든 파일 업로드 완료 대기
-    page.wait_for_timeout(5000)
+    # 업로드 완료 대기 (파일 수에 비례)
+    wait_sec = max(10, len(valid_files) * 3)
+    page.wait_for_timeout(wait_sec * 1000)
+    log.info("    업로드 완료 대기 (%d초)", wait_sec)
 
 
 def add_to_timeline(page: Page, asset_index: int) -> None:
@@ -253,7 +254,7 @@ def assemble_video(
 
     # ===== 타임라인에 컷 배치 + 자막 + 전환 + 효과음 =====
     log.info("  타임라인 구성 중... (이미지 %d장)", len(image_paths))
-    cut_index = 0
+    media_index = 0  # CapCut 미디어 패널에서의 에셋 인덱스
     for scene_idx, scene in enumerate(script["scenes"]):
         scene_num = scene["scene_number"]
         cuts = scene.get("cuts", [{"cut_number": 1, "sfx": "", "subtitle": ""}])
@@ -267,8 +268,12 @@ def assemble_video(
             sfx = cut.get("sfx", "")
             subtitle = cut.get("subtitle", "")
 
+            if media_index >= len(image_paths):
+                log.warning("    이미지 부족: 장면 %d 컷 %d 건너뜀", scene_num, cut_num)
+                continue
+
             log.info("    장면 %d 컷 %d 배치...", scene_num, cut_num)
-            add_to_timeline(page, cut_index)
+            add_to_timeline(page, media_index)
             page.wait_for_timeout(500)
 
             if subtitle:
@@ -277,7 +282,7 @@ def assemble_video(
             if sfx:
                 add_sfx(page, sfx)
 
-            cut_index += 1
+            media_index += 1
 
     # 음성 트랙 추가 (장면당 1개)
     log.info("  음성 트랙 배치 중... (%d개)", len(voice_paths))

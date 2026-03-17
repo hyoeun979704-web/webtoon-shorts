@@ -178,7 +178,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         try:
             ensure_login(gpt_page, config.CHATGPT_URL, "ChatGPT")
 
-            image_paths = []
+            image_paths = []  # cut 순서와 1:1 매칭 (빈 프롬프트는 빈 문자열)
             os.makedirs(images_dir, exist_ok=True)
 
             sheet_row = 2
@@ -193,6 +193,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                     prompt = cut.get("image_prompt", "").strip()
                     if not prompt:
                         log.warning("  장면 %d 컷 %d: 이미지 프롬프트가 비어있어 건너뜁니다", scene_num, cut_num)
+                        image_paths.append("")  # 빈 슬롯 유지 (인덱스 정합성)
                         sheet_row += 1
                         continue
 
@@ -212,9 +213,10 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         finally:
             gpt_page.close()
 
-        log.info("  총 %d장 이미지 생성 완료", len(image_paths))
+        valid_image_paths = [p for p in image_paths if p]
+        log.info("  총 %d장 이미지 생성 완료", len(valid_image_paths))
 
-        if not image_paths:
+        if not valid_image_paths:
             raise RuntimeError("생성된 이미지가 없습니다. 대본의 이미지 프롬프트를 확인하세요.")
 
         # ===== 3단계: 음성 생성 =====
@@ -276,7 +278,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                 assemble_video(
                     capcut_page,
                     script,
-                    image_paths,
+                    valid_image_paths,
                     voice_paths,
                     output_video,
                     auto_export=not review_edit,

@@ -10,15 +10,21 @@ from browser_manager import ensure_login
 from utils import log
 
 
+def _is_on_editor(page: Page) -> bool:
+    """이미 Typecast 에디터 페이지에 있는지 확인합니다."""
+    return "/editor" in page.url and "typecast" in page.url.lower()
+
+
 def generate_voice(page: Page, text: str, output_path: str, actor_name: str = "") -> str:
     """Typecast 웹에서 음성을 생성하고 다운로드합니다."""
     if not actor_name:
         raise ValueError("성우 이름이 지정되지 않았습니다. 시트 [설정] 탭의 '성우 이름'을 입력하세요.")
 
-    ensure_login(page, config.TYPECAST_URL, "Typecast")
-
-    page.goto(f"{config.TYPECAST_URL}/editor", wait_until="domcontentloaded")
-    page.wait_for_timeout(3000)
+    # 이미 에디터에 있으면 로그인/네비게이션 건너뜀
+    if not _is_on_editor(page):
+        ensure_login(page, config.TYPECAST_URL, "Typecast")
+        page.goto(f"{config.TYPECAST_URL}/editor", wait_until="domcontentloaded")
+        page.wait_for_timeout(3000)
 
     # 성우 선택
     actor_search = page.locator(

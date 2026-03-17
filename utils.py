@@ -52,15 +52,21 @@ def extract_json(text: str, required_key: str = "") -> dict:
             raise ValueError(f"JSON에 '{required_key}' 키가 없습니다")
         return data
 
-    # 2) 코드블록 없이 bare JSON
-    if required_key:
-        pattern = r"\{[\s\S]*\"" + re.escape(required_key) + r"\"[\s\S]*\}"
-    else:
-        pattern = r"\{[\s\S]+\}"
-    match = re.search(pattern, text)
-    if match:
-        data = json.loads(match.group(0))
-        return data
+    # 2) 코드블록 없이 bare JSON - 중괄호 깊이 기반 추출
+    start = text.find("{")
+    if start != -1:
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start:i + 1]
+                    data = json.loads(candidate)
+                    if required_key and required_key not in data:
+                        raise ValueError(f"JSON에 '{required_key}' 키가 없습니다")
+                    return data
 
     raise ValueError(f"JSON을 찾을 수 없습니다. 응답 앞부분:\n{text[:500]}")
 
@@ -72,12 +78,36 @@ def wait_for_response_complete(page: Page, timeout_sec: int = 120) -> None:
 
     '응답 중지' 버튼이 사라지면 응답 완료로 판단합니다.
     """
-    page.wait_for_timeout(5000)  # 응답 시작 대기
+    # Claude/ChatGPT 모두 커버하는 정지 버튼 셀렉터
+    stop_selectors = [
+        'button[aria-label="Stop Response"]',
+        'button[aria-label="Stop generating"]',
+        'button[aria-label="Stop streaming"]',
+        'button[data-testid="stop-button"]',
+        'button[class*="stop"]',
+    ]
+    stop_selector = ", ".join(stop_selectors)
 
+    page.wait_for_timeout(3000)  # 응답 시작 대기
+
+    # 정지 버튼이 나타날 때까지 잠시 대기 (응답이 실제로 시작됐는지 확인)
+    stop_appeared = False
+    for _ in range(10):
+        page.wait_for_timeout(500)
+        if page.locator(stop_selector).first.is_visible():
+            stop_appeared = True
+            break
+
+    if not stop_appeared:
+        # 정지 버튼을 못 찾았으면 충분히 대기 후 리턴
+        log.warning("응답 정지 버튼을 감지하지 못했습니다. 추가 대기 후 진행합니다.")
+        page.wait_for_timeout(10000)
+        return
+
+    # 정지 버튼이 사라질 때까지 대기
     for elapsed in range(timeout_sec):
         page.wait_for_timeout(1000)
-        stop_btn = page.locator('button[aria-label="Stop Response"]')
-        if not stop_btn.is_visible():
+        if not page.locator(stop_selector).first.is_visible():
             break
     else:
         log.warning("응답 대기 타임아웃 (%d초) - 응답이 아직 진행 중일 수 있습니다", timeout_sec)
@@ -86,7 +116,7 @@ def wait_for_response_complete(page: Page, timeout_sec: int = 120) -> None:
 
 
 def get_assistant_response(page: Page) -> str:
-    """페이지에서 어시스턴트(Claude/ChatGPT) 응답 텍스트를 추출합니다."""
+    """페이지에서 마지막 어시스턴트(Claude/ChatGPT) 응답 텍스트를 추출합니다."""
     selectors = [
         "[data-message-author-role='assistant']",
         ".font-claude-message",
@@ -94,7 +124,8 @@ def get_assistant_response(page: Page) -> str:
     for sel in selectors:
         blocks = page.locator(sel).all()
         if blocks:
-            return "\n".join(b.inner_text() for b in blocks)
+            # 마지막 응답 블록만 반환 (이전 대화 응답 포함 방지)
+            return blocks[-1].inner_text()
 
     raise RuntimeError("응답을 가져올 수 없습니다. 페이지 구조가 변경되었을 수 있습니다.")
 
