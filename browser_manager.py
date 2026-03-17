@@ -8,6 +8,7 @@ persistent context로 유지합니다. 최초 1회만 수동 로그인하면
 import os
 from playwright.sync_api import sync_playwright, BrowserContext, Page
 import config
+from utils import log
 
 
 class BrowserManager:
@@ -44,10 +45,21 @@ class BrowserManager:
 
     def close(self):
         """브라우저를 종료합니다."""
-        if self._context:
-            self._context.close()
-        if self._playwright:
-            self._playwright.stop()
+        try:
+            if self._context:
+                self._context.close()
+        except Exception as e:
+            log.warning("브라우저 컨텍스트 종료 중 오류: %s", e)
+        finally:
+            self._context = None
+
+        try:
+            if self._playwright:
+                self._playwright.stop()
+        except Exception as e:
+            log.warning("Playwright 종료 중 오류: %s", e)
+        finally:
+            self._playwright = None
 
     def __enter__(self):
         self.start()
@@ -62,15 +74,20 @@ def ensure_login(page: Page, service_url: str, service_name: str):
     page.goto(service_url, wait_until="domcontentloaded", timeout=30000)
     page.wait_for_timeout(3000)
 
-    # 로그인 페이지로 리다이렉트되었는지 간단 확인
     current_url = page.url.lower()
     login_keywords = ["login", "signin", "sign-in", "auth", "accounts"]
 
     if any(kw in current_url for kw in login_keywords):
-        print(f"\n{'='*50}")
-        print(f"  {service_name} 로그인이 필요합니다!")
-        print(f"  브라우저 창에서 직접 로그인해주세요.")
-        print(f"  로그인 완료 후 Enter를 눌러주세요.")
-        print(f"{'='*50}\n")
+        log.info("")
+        log.info("=" * 50)
+        log.info("  %s 로그인이 필요합니다!", service_name)
+        log.info("  브라우저 창에서 직접 로그인해주세요.")
+        log.info("  로그인 완료 후 Enter를 눌러주세요.")
+        log.info("=" * 50)
         input("  → 로그인 완료 후 Enter: ")
         page.wait_for_timeout(2000)
+
+        # 로그인 후 재확인
+        current_url = page.url.lower()
+        if any(kw in current_url for kw in login_keywords):
+            log.warning("로그인 페이지에서 벗어나지 못했습니다. URL: %s", page.url)

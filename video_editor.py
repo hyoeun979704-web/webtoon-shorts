@@ -10,6 +10,7 @@ import os
 from playwright.sync_api import Page
 import config
 from browser_manager import ensure_login
+from utils import log
 
 
 def create_project(page: Page, title: str) -> None:
@@ -39,13 +40,23 @@ def upload_assets(page: Page, file_paths: list[str]) -> None:
     """에셋 파일들을 CapCut에 업로드합니다."""
     upload_input = page.locator('input[type="file"]').first
 
+    valid_files = []
     for file_path in file_paths:
         abs_path = os.path.abspath(file_path)
-        if os.path.exists(abs_path):
-            upload_input.set_input_files(abs_path)
-            page.wait_for_timeout(2000)
-            print(f"    업로드: {os.path.basename(file_path)}")
+        if not os.path.exists(abs_path):
+            log.warning("파일을 찾을 수 없어 건너뜁니다: %s", file_path)
+            continue
+        valid_files.append(abs_path)
 
+    if not valid_files:
+        raise FileNotFoundError("업로드할 에셋 파일이 없습니다")
+
+    for abs_path in valid_files:
+        upload_input.set_input_files(abs_path)
+        page.wait_for_timeout(2000)
+        log.info("    업로드: %s", os.path.basename(abs_path))
+
+    # 모든 파일 업로드 완료 대기
     page.wait_for_timeout(5000)
 
 
@@ -57,10 +68,15 @@ def add_to_timeline(page: Page, asset_index: int) -> None:
     if asset_index < len(media_items):
         media_items[asset_index].dblclick()
         page.wait_for_timeout(1000)
+    else:
+        log.warning("에셋 인덱스 %d가 범위를 벗어났습니다 (총 %d개)", asset_index, len(media_items))
 
 
 def add_subtitle(page: Page, text: str) -> None:
     """자막을 추가합니다."""
+    if not text:
+        return
+
     text_btn = page.locator(
         'button:has-text("텍스트"), button:has-text("Text"), '
         '[data-testid="text-tool"]'
@@ -95,17 +111,16 @@ def add_transition(page: Page, name: str) -> None:
     if not name:
         return
 
-    # 전환 효과 패널 열기
     transition_btn = page.locator(
         'button:has-text("전환"), button:has-text("Transition"), '
         '[data-testid="transition-tab"]'
     ).first
     if not transition_btn.is_visible():
+        log.warning("전환 효과 버튼을 찾을 수 없습니다")
         return
     transition_btn.click()
     page.wait_for_timeout(1000)
 
-    # CapCut에서 이름 그대로 검색
     search_input = page.locator(
         'input[placeholder*="검색"], input[placeholder*="Search"], '
         'input[type="search"]'
@@ -115,14 +130,15 @@ def add_transition(page: Page, name: str) -> None:
         search_input.fill(name)
         page.wait_for_timeout(1500)
 
-    # 첫 번째 결과 적용
     transition_items = page.locator(
         '.transition-item, [data-testid="transition-item"]'
     ).all()
     if transition_items:
         transition_items[0].dblclick()
         page.wait_for_timeout(500)
-        print(f"      전환: {name}")
+        log.info("      전환: %s", name)
+    else:
+        log.warning("      전환 '%s' 검색 결과 없음", name)
 
 
 def add_sfx(page: Page, name: str) -> None:
@@ -133,17 +149,16 @@ def add_sfx(page: Page, name: str) -> None:
     if not name:
         return
 
-    # 오디오 패널 열기
     audio_btn = page.locator(
         'button:has-text("오디오"), button:has-text("Audio"), '
         '[data-testid="audio-tab"]'
     ).first
     if not audio_btn.is_visible():
+        log.warning("오디오 버튼을 찾을 수 없습니다")
         return
     audio_btn.click()
     page.wait_for_timeout(1000)
 
-    # 효과음 카테고리 선택
     sfx_tab = page.locator(
         'button:has-text("효과음"), button:has-text("Sound effects"), '
         'button:has-text("SFX")'
@@ -152,7 +167,6 @@ def add_sfx(page: Page, name: str) -> None:
         sfx_tab.click()
         page.wait_for_timeout(1000)
 
-    # CapCut에서 이름 그대로 검색
     search_input = page.locator(
         'input[placeholder*="검색"], input[placeholder*="Search"], '
         'input[type="search"]'
@@ -162,14 +176,15 @@ def add_sfx(page: Page, name: str) -> None:
         search_input.fill(name)
         page.wait_for_timeout(1500)
 
-    # 첫 번째 결과 적용
     sfx_items = page.locator(
         '.audio-item, [data-testid="audio-item"], .sound-item'
     ).all()
     if sfx_items:
         sfx_items[0].dblclick()
         page.wait_for_timeout(500)
-        print(f"      효과음: {name}")
+        log.info("      효과음: %s", name)
+    else:
+        log.warning("      효과음 '%s' 검색 결과 없음", name)
 
 
 def export_video(page: Page, output_path: str) -> str:
@@ -192,8 +207,8 @@ def export_video(page: Page, output_path: str) -> str:
     ).last
     confirm_btn.click()
 
-    print("    영상 내보내기 중...")
-    for _ in range(300):
+    log.info("    영상 내보내기 중...")
+    for elapsed in range(300):
         page.wait_for_timeout(1000)
         done = page.locator(
             'text="완료", text="Done", text="100%", '
@@ -214,6 +229,9 @@ def export_video(page: Page, output_path: str) -> str:
         download = download_info.value
         download.save_as(output_path)
 
+    if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+        raise RuntimeError(f"영상 파일 다운로드 실패: {output_path}")
+
     return output_path
 
 
@@ -226,23 +244,21 @@ def assemble_video(
     auto_export: bool = False,
 ) -> str:
     """CapCut 웹에서 전체 영상을 조합합니다."""
-    print("  CapCut 프로젝트 생성...")
+    log.info("  CapCut 프로젝트 생성...")
     create_project(page, script["title"])
 
-    # 모든 에셋 업로드
-    print("  에셋 업로드 중...")
+    log.info("  에셋 업로드 중...")
     all_files = image_paths + voice_paths
     upload_assets(page, all_files)
 
     # ===== 타임라인에 컷 배치 + 자막 + 전환 + 효과음 =====
-    print(f"  타임라인 구성 중... (이미지 {len(image_paths)}장)")
+    log.info("  타임라인 구성 중... (이미지 %d장)", len(image_paths))
     cut_index = 0
     for scene_idx, scene in enumerate(script["scenes"]):
         scene_num = scene["scene_number"]
         cuts = scene.get("cuts", [{"cut_number": 1, "sfx": "", "subtitle": ""}])
         transition = scene.get("transition", "")
 
-        # 장면 전환 효과 (첫 장면 제외, 이름이 있을 때만)
         if scene_idx > 0 and transition:
             add_transition(page, transition)
 
@@ -251,43 +267,41 @@ def assemble_video(
             sfx = cut.get("sfx", "")
             subtitle = cut.get("subtitle", "")
 
-            print(f"    장면 {scene_num} 컷 {cut_num} 배치...")
+            log.info("    장면 %d 컷 %d 배치...", scene_num, cut_num)
             add_to_timeline(page, cut_index)
             page.wait_for_timeout(500)
 
-            # 자막 (컷에 자막이 있으면 추가)
             if subtitle:
                 add_subtitle(page, subtitle)
 
-            # 효과음 (이름이 있으면 CapCut에서 검색하여 추가)
             if sfx:
                 add_sfx(page, sfx)
 
             cut_index += 1
 
     # 음성 트랙 추가 (장면당 1개)
-    print(f"  음성 트랙 배치 중... ({len(voice_paths)}개)")
+    log.info("  음성 트랙 배치 중... (%d개)", len(voice_paths))
     for i in range(len(voice_paths)):
         add_to_timeline(page, len(image_paths) + i)
         page.wait_for_timeout(500)
 
-    # ===== 검토 포인트: CapCut에서 직접 확인/수정 =====
+    # ===== 검토 포인트 =====
     if not auto_export:
-        print("\n" + "=" * 50)
-        print("  CapCut 타임라인 배치가 완료되었습니다.")
-        print("  브라우저에서 직접 확인하고 수정하세요:")
-        print("    - 컷 길이/순서 조정")
-        print("    - 전환 효과 변경 또는 추가")
-        print("    - 효과음 타이밍 미세 조정")
-        print("    - 자막 위치/크기/스타일 수정")
-        print("    - 배경음악 추가")
-        print("")
-        print("  수정 완료 후 Enter를 눌러주세요. (내보내기 진행)")
-        print("=" * 50)
+        log.info("")
+        log.info("=" * 50)
+        log.info("  CapCut 타임라인 배치가 완료되었습니다.")
+        log.info("  브라우저에서 직접 확인하고 수정하세요:")
+        log.info("    - 컷 길이/순서 조정")
+        log.info("    - 전환 효과 변경 또는 추가")
+        log.info("    - 효과음 타이밍 미세 조정")
+        log.info("    - 자막 위치/크기/스타일 수정")
+        log.info("    - 배경음악 추가")
+        log.info("")
+        log.info("  수정 완료 후 Enter를 눌러주세요. (내보내기 진행)")
+        log.info("=" * 50)
         input("  → Enter: ")
 
-    # 내보내기
-    print("  영상 내보내기 중...")
+    log.info("  영상 내보내기 중...")
     export_video(page, output_path)
 
     return output_path

@@ -6,31 +6,60 @@ DALL-E로 고퀄리티 웹툰 이미지를 생성합니다.
 """
 
 import os
+
 import requests
 from playwright.sync_api import Page
+
 import config
 from browser_manager import ensure_login
+from utils import log, navigate_to_project
 
 
-def _navigate_to_project_or_new(page: Page, project_url: str = ""):
-    """ChatGPT 프로젝트/GPT 또는 새 대화로 이동합니다."""
-    if project_url:
-        # 프로젝트 URL: https://chatgpt.com/g/g-xxx (GPT)
-        # 또는 https://chatgpt.com/project/xxx (프로젝트)
-        page.goto(project_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(3000)
+# 이미지 탐색용 셀렉터 (우선순위 순)
+_IMAGE_SELECTORS = [
+    'img[alt*="Generated"]',
+    'img[src*="oaidalleapi"]',
+    'img[src*="dall-e"]',
+    '.dalle-image img',
+    '[data-message-author-role="assistant"] img[src*="https"]',
+]
 
-        # 프로젝트/GPT 내 새 대화가 필요하면 시작
-        new_chat_btn = page.locator(
-            'button:has-text("New chat"), button:has-text("Start chat"), '
-            'a[href*="/new"]'
-        ).first
-        if new_chat_btn.is_visible():
-            new_chat_btn.click()
-            page.wait_for_timeout(2000)
+
+def _wait_for_image(page: Page, timeout_sec: int = 180) -> str:
+    """ChatGPT에서 이미지가 생성될 때까지 대기하고 src URL을 반환합니다."""
+    for elapsed in range(timeout_sec):
+        page.wait_for_timeout(1000)
+        for sel in _IMAGE_SELECTORS:
+            imgs = page.locator(sel).all()
+            if imgs and imgs[-1].is_visible():
+                page.wait_for_timeout(3000)  # 이미지 렌더링 안정화
+                src = imgs[-1].get_attribute("src")
+                if src:
+                    return src
+
+    raise TimeoutError(f"ChatGPT 이미지 생성 타임아웃 ({timeout_sec}초)")
+
+
+def _download_image(page: Page, img_src: str, output_path: str) -> None:
+    """이미지 URL에서 파일을 다운로드합니다."""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    if img_src.startswith("http"):
+        resp = requests.get(img_src, timeout=60)
+        resp.raise_for_status()
+        if len(resp.content) < 1000:
+            raise RuntimeError(f"다운로드된 이미지가 너무 작습니다 ({len(resp.content)} bytes)")
+        with open(output_path, "wb") as f:
+            f.write(resp.content)
     else:
-        page.goto(f"{config.CHATGPT_URL}/?model=gpt-4", wait_until="domcontentloaded")
-        page.wait_for_timeout(3000)
+        # data URL이나 blob인 경우 스크린샷으로 대체
+        log.warning("이미지 URL이 HTTP가 아닙니다 (%s...). 스크린샷으로 대체합니다.", img_src[:50])
+        for sel in _IMAGE_SELECTORS:
+            imgs = page.locator(sel).all()
+            if imgs and imgs[-1].is_visible():
+                imgs[-1].screenshot(path=output_path)
+                return
+        raise RuntimeError("이미지 요소를 찾을 수 없어 스크린샷을 저장할 수 없습니다")
 
 
 def generate_image(
@@ -39,17 +68,9 @@ def generate_image(
     output_path: str,
     project_url: str = "",
 ) -> str:
-    """ChatGPT 프로젝트에서 DALL-E로 이미지를 생성합니다.
+    """ChatGPT 프로젝트에서 DALL-E로 이미지를 생성합니다."""
+    navigate_to_project(page, config.CHATGPT_URL, project_url)
 
-    Args:
-        page: Playwright 페이지
-        prompt: 이미지 프롬프트
-        output_path: 저장 경로
-        project_url: ChatGPT 프로젝트/GPT URL (스타일 지침 적용됨)
-    """
-    _navigate_to_project_or_new(page, project_url)
-
-    # 고퀄리티 이미지 생성 프롬프트
     full_prompt = (
         f"Generate a single image with the following description. "
         f"Make it cinematic, high detail, professional quality:\n\n"
@@ -64,72 +85,14 @@ def generate_image(
     editor.fill(full_prompt)
     page.wait_for_timeout(500)
 
-    # 전송
     send_btn = page.locator('[data-testid="send-button"]').first
     if send_btn.is_visible():
         send_btn.click()
     else:
         editor.press("Enter")
 
-    # 이미지 생성 대기 (최대 3분)
-    print("    이미지 생성 대기 중...")
-    img_element = None
-    for _ in range(180):
-        page.wait_for_timeout(1000)
-
-        selectors = [
-            'img[alt*="Generated"]',
-            'img[src*="oaidalleapi"]',
-            'img[src*="dall-e"]',
-            '.dalle-image img',
-            '[data-message-author-role="assistant"] img[src*="https"]',
-        ]
-        for sel in selectors:
-            imgs = page.locator(sel).all()
-            if imgs:
-                img_element = imgs[-1]
-                break
-
-        if img_element and img_element.is_visible():
-            page.wait_for_timeout(3000)
-            break
-    else:
-        raise TimeoutError("ChatGPT 이미지 생성 타임아웃 (3분)")
-
-    # 이미지 다운로드
-    img_src = img_element.get_attribute("src")
-    if not img_src:
-        raise RuntimeError("이미지 URL을 찾을 수 없습니다")
-
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-    if img_src.startswith("http"):
-        img_data = requests.get(img_src, timeout=60).content
-        with open(output_path, "wb") as f:
-            f.write(img_data)
-    else:
-        img_element.screenshot(path=output_path)
+    log.info("  이미지 생성 대기 중...")
+    img_src = _wait_for_image(page)
+    _download_image(page, img_src, output_path)
 
     return output_path
-
-
-def generate_scene_images(
-    page: Page,
-    script: dict,
-    output_dir: str,
-    project_url: str = "",
-) -> list[str]:
-    """대본의 모든 장면에 대해 이미지를 생성합니다."""
-    image_paths = []
-    os.makedirs(output_dir, exist_ok=True)
-
-    for scene in script["scenes"]:
-        scene_num = scene["scene_number"]
-        output_path = os.path.join(output_dir, f"scene_{scene_num:02d}.png")
-
-        print(f"  장면 {scene_num} 이미지 생성 중...")
-        generate_image(page, scene["image_prompt"], output_path, project_url)
-        image_paths.append(output_path)
-        print(f"  장면 {scene_num} 이미지 완료: {output_path}")
-
-    return image_paths

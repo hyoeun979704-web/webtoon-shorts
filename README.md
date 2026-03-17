@@ -10,13 +10,15 @@
      ↓
 [Claude 프로젝트] 토픽 키워드 발굴 → [시트] 작업목록에 자동 추가
      ↓
-[Claude 프로젝트] 대본 생성 → [시트] 대본 탭에서 확인/수정
+[Claude 프로젝트] 대본 생성 → [시트] 대본 탭에서 확인/수정 ← 검토 포인트 1
      ↓
-[ChatGPT 프로젝트] DALL-E 이미지 생성 (장면별 실시간 상태)
+[ChatGPT 프로젝트] DALL-E 이미지 생성 (컷별 실시간 상태)
      ↓
 [Typecast 웹] 음성 합성 (장면별 실시간 상태)
      ↓
-[CapCut 웹] 영상 편집 → 최종 출력
+[CapCut 웹] 영상 편집 → 브라우저에서 확인/수정 ← 검토 포인트 2
+     ↓
+최종 영상 출력
 ```
 
 ## Google Sheets 구조
@@ -28,11 +30,14 @@
 | **키워드 개수** | 5 | 한 번에 발굴할 토픽 수 |
 | **Claude 프로젝트 URL** | https://claude.ai/project/xxx | 대본 생성용 프로젝트 (시스템 프롬프트 적용) |
 | **ChatGPT 프로젝트 URL** | https://chatgpt.com/g/g-xxx | 이미지 생성용 GPT/프로젝트 (스타일 지침 적용) |
-| 성우 이름 | | Typecast 성우 |
+| **성우 이름** | (필수) | Typecast 성우 이름 |
 | 이미지 스타일 | webtoon style, manhwa art... | DALL-E 프롬프트에 추가 |
 | 장면 수 | 5 | 장면 개수 |
+| 장면당 컷 수 | 3~4 | 장면당 이미지 수 |
+| 총 이미지 수 | 15~20 | 전체 이미지 수 |
 | 편집 모드 | capcut | capcut / skip |
-| 자동 대본 승인 | N | Y면 대본 수정 없이 바로 진행 |
+| 대본 검토 | Y | Y면 대본 생성 후 시트에서 수정 가능 |
+| 편집 검토 | Y | Y면 CapCut 배치 후 브라우저에서 수정 가능 |
 
 ### [작업목록] 탭
 | 번호 | 주제 | 상태 | 제목 | 장면수 | 시작시간 | 완료시간 | 출력경로 | 비고 |
@@ -42,7 +47,14 @@
 → `--keywords`로 자동 생성되거나 직접 입력
 
 ### [대본] 탭
-→ 대본 생성 후 자동 기록. 나레이션/이미지 프롬프트를 수정 후 Enter로 진행
+| 장면번호 | 컷번호 | 나레이션 | 자막 | 이미지 프롬프트 | 효과음 | 장면전환 | 이미지 상태 | 음성 상태 |
+|----------|--------|----------|------|----------------|--------|----------|------------|----------|
+
+- **나레이션**: 장면당 1개, 음성 생성에 사용 (첫 컷에만 표시)
+- **자막**: 컷별 자유 작성, 기본값은 나레이션 텍스트
+- **효과음**: CapCut에 있는 효과음 이름을 그대로 입력
+- **장면전환**: CapCut에 있는 전환 효과 이름을 그대로 입력
+- 대본 생성 후 자동 기록됨, 수정 후 Enter로 진행
 
 ## 설치
 
@@ -65,7 +77,7 @@ python main.py --init
 #    - 카테고리: "직장인 공감"
 #    - Claude 프로젝트 URL: (Claude에서 만든 프로젝트 URL)
 #    - ChatGPT 프로젝트 URL: (ChatGPT에서 만든 GPT/프로젝트 URL)
-#    - 성우 이름, 이미지 스타일 등
+#    - 성우 이름 (필수), 이미지 스타일 등
 
 # 3) 서비스 로그인 (최초 1회)
 python main.py --login
@@ -79,6 +91,26 @@ python main.py
 
 # 6) 키워드 발굴 + 바로 영상 생성 (한 번에)
 python main.py --keywords-and-run
+
+# 7) 브라우저 숨김 모드 (헤드리스)
+python main.py --headless
+```
+
+## 프로젝트 구조
+
+```
+├── main.py              # 메인 파이프라인 오케스트레이터
+├── config.py            # 설정 (URL, 경로 등)
+├── utils.py             # 공통 유틸리티 (로깅, JSON 파싱, Playwright 헬퍼)
+├── browser_manager.py   # Playwright 브라우저 세션 관리
+├── sheet_manager.py     # Google Sheets CRUD
+├── keyword_generator.py # Claude 키워드 발굴
+├── script_generator.py  # Claude 대본 생성
+├── image_generator.py   # ChatGPT DALL-E 이미지 생성
+├── voice_generator.py   # Typecast 음성 합성
+├── video_editor.py      # CapCut 영상 편집
+├── requirements.txt     # Python 의존성
+└── .env.example         # 환경변수 예시
 ```
 
 ## Claude/ChatGPT 프로젝트 활용

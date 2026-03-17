@@ -4,11 +4,10 @@
 프로젝트에 설정된 시스템 프롬프트 + 지식 기반으로 고퀄리티 대본을 생성합니다.
 """
 
-import json
-import re
 from playwright.sync_api import Page
 import config
 from browser_manager import ensure_login
+from utils import log, extract_json, send_and_wait, navigate_to_project
 
 
 PROMPT_TEMPLATE = """웹툰 숏폼 영상 대본을 작성해줘.
@@ -78,59 +77,31 @@ PROMPT_TEMPLATE = """웹툰 숏폼 영상 대본을 작성해줘.
 - JSON만 출력"""
 
 
-def _navigate_to_project_or_new(page: Page, project_url: str = ""):
-    """Claude 프로젝트 또는 새 대화로 이동합니다."""
-    if project_url:
-        page.goto(project_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(3000)
-        new_chat_btn = page.locator(
-            'button:has-text("New chat"), button:has-text("새 대화"), '
-            'a[href*="/new"]'
-        ).first
-        if new_chat_btn.is_visible():
-            new_chat_btn.click()
-            page.wait_for_timeout(2000)
-    else:
-        page.goto(f"{config.CLAUDE_URL}/new", wait_until="domcontentloaded")
-        page.wait_for_timeout(3000)
+def _validate_script(script: dict) -> None:
+    """생성된 대본의 구조를 검증합니다."""
+    if "title" not in script:
+        raise ValueError("대본에 'title' 필드가 없습니다")
+    if "scenes" not in script or not script["scenes"]:
+        raise ValueError("대본에 장면(scenes)이 없습니다")
 
-
-def _send_and_wait(page: Page, prompt: str) -> str:
-    """프롬프트를 전송하고 응답 완료까지 대기합니다."""
-    editor = page.locator('[contenteditable="true"]').first
-    editor.wait_for(timeout=10000)
-    editor.click()
-    editor.fill(prompt)
-    page.wait_for_timeout(500)
-
-    send_button = page.locator('button[aria-label="Send Message"]').first
-    if send_button.is_visible():
-        send_button.click()
-    else:
-        editor.press("Enter")
-
-    print("  Claude 응답 대기 중...")
-    page.wait_for_timeout(5000)
-
-    for _ in range(120):
-        page.wait_for_timeout(1000)
-        stop_btn = page.locator('button[aria-label="Stop Response"]')
-        if not stop_btn.is_visible():
-            break
-    page.wait_for_timeout(2000)
-
-    response_blocks = page.locator("[data-message-author-role='assistant']").all()
-    if not response_blocks:
-        response_blocks = page.locator(".font-claude-message").all()
-
-    full_response = ""
-    for block in response_blocks:
-        full_response += block.inner_text() + "\n"
-
-    if not full_response.strip():
-        raise RuntimeError("Claude 응답을 가져올 수 없습니다")
-
-    return full_response
+    for i, scene in enumerate(script["scenes"]):
+        if "scene_number" not in scene:
+            scene["scene_number"] = i + 1
+        if "narration" not in scene or not scene["narration"].strip():
+            raise ValueError(f"장면 {scene.get('scene_number', i+1)}에 나레이션이 없습니다")
+        if "cuts" not in scene or not scene["cuts"]:
+            raise ValueError(f"장면 {scene.get('scene_number', i+1)}에 컷이 없습니다")
+        for j, cut in enumerate(scene["cuts"]):
+            if "cut_number" not in cut:
+                cut["cut_number"] = j + 1
+            if "image_prompt" not in cut or not cut["image_prompt"].strip():
+                raise ValueError(
+                    f"장면 {scene['scene_number']} 컷 {cut.get('cut_number', j+1)}에 이미지 프롬프트가 없습니다"
+                )
+            # sfx 기본값 보장
+            cut.setdefault("sfx", "")
+        # transition 기본값 보장
+        scene.setdefault("transition", "")
 
 
 def generate_script(
@@ -144,10 +115,10 @@ def generate_script(
 ) -> dict:
     """Claude 프로젝트에서 대본을 생성합니다."""
     ensure_login(page, config.CLAUDE_URL, "Claude")
-    _navigate_to_project_or_new(page, project_url)
+    navigate_to_project(page, config.CLAUDE_URL, project_url)
 
     style_instruction = ""
-    if image_style and image_style != "webtoon style, manhwa art, digital illustration":
+    if image_style:
         style_instruction = f"이미지 스타일 참고: {image_style}"
 
     prompt = PROMPT_TEMPLATE.format(
@@ -159,24 +130,18 @@ def generate_script(
         image_style=image_style,
     )
 
-    response = _send_and_wait(page, prompt)
+    response = send_and_wait(page, prompt)
+    script = extract_json(response, required_key="scenes")
+    _validate_script(script)
 
-    json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
-    if json_match:
-        json_str = json_match.group(1)
-    else:
-        json_match = re.search(r"\{[\s\S]*\"scenes\"[\s\S]*\}", response)
-        if json_match:
-            json_str = json_match.group(0)
-        else:
-            raise ValueError(f"JSON을 찾을 수 없습니다. 응답:\n{response[:500]}")
-
-    script = json.loads(json_str)
-    total_cuts = sum(len(s.get("cuts", [])) for s in script["scenes"])
+    total_cuts = sum(len(s["cuts"]) for s in script["scenes"])
     sfx_count = sum(
         1 for s in script["scenes"]
-        for c in s.get("cuts", [])
+        for c in s["cuts"]
         if c.get("sfx", "")
     )
-    print(f"  대본 생성 완료: {script['title']} ({len(script['scenes'])}장면, {total_cuts}컷, 효과음 {sfx_count}개)")
+    log.info(
+        "대본 생성 완료: %s (%d장면, %d컷, 효과음 %d개)",
+        script["title"], len(script["scenes"]), total_cuts, sfx_count,
+    )
     return script
