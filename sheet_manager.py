@@ -6,6 +6,8 @@
   [대본] 탭 - 현재 작업의 대본 (수동 수정 가능)
 """
 
+import os
+
 import gspread
 from utils import log
 
@@ -52,7 +54,21 @@ _SCRIPT_COL = {h: i + 1 for i, h in enumerate(SCRIPT_HEADERS)}
 
 
 def connect(spreadsheet_url: str) -> gspread.Spreadsheet:
-    """Google Sheets에 OAuth로 연결합니다."""
+    """Google Sheets에 연결합니다.
+
+    인증 방식 우선순위:
+      1. 서비스 계정 (SERVICE_ACCOUNT_FILE 환경변수 또는 service_account.json)
+      2. OAuth (credentials.json → authorized_user.json)
+    """
+    sa_file = os.getenv("SERVICE_ACCOUNT_FILE", "")
+    sa_paths = [sa_file, "service_account.json", os.path.expanduser("~/.config/gspread/service_account.json")]
+
+    for path in sa_paths:
+        if path and os.path.isfile(path):
+            log.info("  서비스 계정 인증: %s", path)
+            gc = gspread.service_account(filename=path)
+            return gc.open_by_url(spreadsheet_url)
+
     gc = gspread.oauth()
     return gc.open_by_url(spreadsheet_url)
 

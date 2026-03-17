@@ -87,9 +87,9 @@ SETTING_DROPDOWNS = {
 
 
 def _connect() -> gspread.Spreadsheet:
-    """Google Sheets에 연결합니다."""
-    gc = gspread.oauth()
-    return gc.open_by_url(config.GOOGLE_SHEET_URL)
+    """Google Sheets에 연결합니다. (sheet_manager.connect와 동일한 인증 로직)"""
+    from sheet_manager import connect
+    return connect(config.GOOGLE_SHEET_URL)
 
 
 def _remove_default_sheet(spreadsheet: gspread.Spreadsheet) -> None:

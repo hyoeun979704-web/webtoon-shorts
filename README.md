@@ -71,7 +71,11 @@ playwright install chromium
 
 ```bash
 # 0) 시트 초기 세팅 (최초 1회 - 서식/드롭다운/조건부서식 적용)
+#    방법 A: Python 스크립트 (Google OAuth 또는 서비스 계정 필요)
 python setup_sheet.py
+#    방법 B: Apps Script (인증 없이 시트에서 직접 실행)
+#      → 시트에서 [확장 프로그램] > [Apps Script] 열기
+#      → setup_sheet.gs 내용을 붙여넣고 ▶ 실행 (함수: setupAll)
 # 기존 시트 초기화 후 재생성:
 python setup_sheet.py --reset
 
@@ -103,7 +107,8 @@ python main.py
 
 ```
 ├── main.py              # 메인 파이프라인 오케스트레이터
-├── setup_sheet.py       # Google Sheets 초기 세팅 (서식/드롭다운/조건부서식)
+├── setup_sheet.py       # Google Sheets 초기 세팅 (Python, OAuth/서비스 계정)
+├── setup_sheet.gs       # Google Sheets 초기 세팅 (Apps Script, 인증 불필요)
 ├── config.py            # 설정 (URL, 경로 등)
 ├── utils.py             # 공통 유틸리티 (로깅, JSON 파싱, Playwright 헬퍼)
 ├── browser_manager.py   # Playwright 브라우저 세션 관리
