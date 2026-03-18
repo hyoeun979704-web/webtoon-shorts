@@ -69,6 +69,18 @@ class BrowserManager:
         self.close()
 
 
+def _clear_cookies_for_domain(context, domain: str):
+    """특정 도메인의 쿠키를 삭제합니다."""
+    try:
+        cookies = context.cookies()
+        to_keep = [c for c in cookies if domain not in c.get("domain", "")]
+        context.clear_cookies()
+        if to_keep:
+            context.add_cookies(to_keep)
+    except Exception as e:
+        log.warning("쿠키 삭제 중 오류: %s", e)
+
+
 def ensure_login(page: Page, service_url: str, service_name: str, account_hint: str = ""):
     """서비스에 로그인 상태인지 확인하고, 아니면 사용자에게 수동 로그인을 요청합니다."""
     page.goto(service_url, wait_until="domcontentloaded", timeout=30000)
@@ -76,8 +88,23 @@ def ensure_login(page: Page, service_url: str, service_name: str, account_hint: 
 
     current_url = page.url.lower()
     login_keywords = ["login", "signin", "sign-in", "auth", "accounts"]
+    needs_login = any(kw in current_url for kw in login_keywords)
 
-    if any(kw in current_url for kw in login_keywords):
+    # 이미 로그인되어 있지만 계정 힌트가 있으면 확인
+    if not needs_login and account_hint:
+        log.info("  %s 이미 로그인됨 - 계정 확인 필요: %s", service_name, account_hint)
+        reply = input(f"  → 현재 {account_hint} 계정이 맞나요? (Y/n): ").strip().lower()
+        if reply in ("n", "no"):
+            log.info("  %s 로그아웃 후 재로그인합니다...", service_name)
+            # 해당 도메인 쿠키 삭제
+            from urllib.parse import urlparse
+            domain = urlparse(service_url).hostname
+            _clear_cookies_for_domain(page.context, domain)
+            page.goto(service_url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(3000)
+            needs_login = True
+
+    if needs_login:
         log.info("")
         log.info("=" * 50)
         log.info("  %s 로그인이 필요합니다!", service_name)
