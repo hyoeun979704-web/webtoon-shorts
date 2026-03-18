@@ -7,7 +7,7 @@ import os
 from playwright.sync_api import Page
 import config
 from browser_manager import ensure_login
-from utils import log
+from utils import log, _safe_goto
 
 
 def _is_on_editor(page: Page) -> bool:
@@ -23,7 +23,7 @@ def generate_voice(page: Page, text: str, output_path: str, actor_name: str = ""
     # 이미 에디터에 있으면 로그인/네비게이션 건너뜀
     if not _is_on_editor(page):
         ensure_login(page, config.TYPECAST_URL, "Typecast")
-        page.goto(f"{config.TYPECAST_URL}/editor", wait_until="domcontentloaded")
+        _safe_goto(page, f"{config.TYPECAST_URL}/editor", wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
 
     # 성우 선택

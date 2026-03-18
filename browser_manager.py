@@ -10,22 +10,7 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, BrowserContext, Page
 import config
-from utils import log
-
-
-def _safe_goto(page: Page, url: str, **kwargs):
-    """page.goto 래퍼 - OAuth 리다이렉트 등으로 네비게이션이 중단되어도 안전하게 처리합니다."""
-    try:
-        page.goto(url, **kwargs)
-    except Exception as e:
-        if "interrupted by another navigation" in str(e):
-            log.info("  리다이렉트 감지, 페이지 로딩 대기 중...")
-            try:
-                page.wait_for_load_state("domcontentloaded", timeout=30000)
-            except Exception:
-                pass
-        else:
-            raise
+from utils import log, _safe_goto
 
 
 class BrowserManager:

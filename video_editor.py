@@ -10,14 +10,14 @@ import os
 from playwright.sync_api import Page
 import config
 from browser_manager import ensure_login
-from utils import log
+from utils import log, _safe_goto
 
 
 def create_project(page: Page, title: str) -> None:
     """CapCut 웹에서 새 프로젝트를 생성합니다."""
     ensure_login(page, config.CAPCUT_URL, "CapCut")
 
-    page.goto(f"{config.CAPCUT_URL}/editor", wait_until="domcontentloaded")
+    _safe_goto(page, f"{config.CAPCUT_URL}/editor", wait_until="domcontentloaded")
     page.wait_for_timeout(5000)
 
     new_project_btn = page.locator(
