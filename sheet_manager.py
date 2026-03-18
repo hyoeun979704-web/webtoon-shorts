@@ -205,10 +205,23 @@ def read_settings(spreadsheet: gspread.Spreadsheet) -> dict:
                 idx = dup_count.get(key, 0)
                 mapped_keys = _SETTINGS_MIGRATION[key]
                 if idx < len(mapped_keys):
-                    settings[mapped_keys[idx]] = val
+                    mapped = mapped_keys[idx]
+                    settings[mapped] = val
+                    log.info("  설정 매핑: '%s' (#%d) → '%s' = '%s'",
+                             key, idx + 1, mapped, val[:60] if val else "(빈값)")
                 dup_count[key] = idx + 1
+            elif key in ("Claude 키워드 프로젝트 URL", "Claude 대본 프로젝트 URL"):
+                # 이미 새 키 이름을 사용하는 시트
+                settings[key] = val
             else:
                 settings[key] = val
+
+    # 디버그: 프로젝트 URL 확인
+    kw_url = settings.get("Claude 키워드 프로젝트 URL", "")
+    sc_url = settings.get("Claude 대본 프로젝트 URL", "")
+    log.info("  Claude 키워드 프로젝트 URL: %s", kw_url[:60] if kw_url else "(없음)")
+    log.info("  Claude 대본 프로젝트 URL: %s", sc_url[:60] if sc_url else "(없음)")
+
     return settings
 
 
