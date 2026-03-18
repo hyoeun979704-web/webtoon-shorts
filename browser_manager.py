@@ -6,9 +6,26 @@ persistent context로 유지합니다. 최초 1회만 수동 로그인하면
 """
 
 import os
+from urllib.parse import urlparse
+
 from playwright.sync_api import sync_playwright, BrowserContext, Page
 import config
 from utils import log
+
+
+def _safe_goto(page: Page, url: str, **kwargs):
+    """page.goto 래퍼 - OAuth 리다이렉트 등으로 네비게이션이 중단되어도 안전하게 처리합니다."""
+    try:
+        page.goto(url, **kwargs)
+    except Exception as e:
+        if "interrupted by another navigation" in str(e):
+            log.info("  리다이렉트 감지, 페이지 로딩 대기 중...")
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=30000)
+            except Exception:
+                pass
+        else:
+            raise
 
 
 class BrowserManager:
@@ -83,7 +100,7 @@ def _clear_cookies_for_domain(context, domain: str):
 
 def ensure_login(page: Page, service_url: str, service_name: str, account_hint: str = ""):
     """서비스에 로그인 상태인지 확인하고, 아니면 사용자에게 수동 로그인을 요청합니다."""
-    page.goto(service_url, wait_until="domcontentloaded", timeout=30000)
+    _safe_goto(page, service_url, wait_until="domcontentloaded", timeout=30000)
     page.wait_for_timeout(3000)
 
     current_url = page.url.lower()
@@ -96,11 +113,9 @@ def ensure_login(page: Page, service_url: str, service_name: str, account_hint: 
         reply = input(f"  → 현재 {account_hint} 계정이 맞나요? (Y/n): ").strip().lower()
         if reply in ("n", "no"):
             log.info("  %s 로그아웃 후 재로그인합니다...", service_name)
-            # 해당 도메인 쿠키 삭제
-            from urllib.parse import urlparse
             domain = urlparse(service_url).hostname
             _clear_cookies_for_domain(page.context, domain)
-            page.goto(service_url, wait_until="domcontentloaded", timeout=30000)
+            _safe_goto(page, service_url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(3000)
             needs_login = True
 
