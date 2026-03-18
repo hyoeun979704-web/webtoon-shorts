@@ -229,23 +229,21 @@ def _safe_goto(page: Page, url: str, **kwargs):
 
 
 def navigate_to_project(page: Page, base_url: str, project_url: str = "") -> None:
-    """Claude/ChatGPT 프로젝트 또는 새 대화 페이지로 이동합니다."""
+    """Claude/ChatGPT 프로젝트 또는 새 대화 페이지로 이동합니다.
+
+    프로젝트 페이지에는 이미 입력창이 있으므로
+    별도 버튼 클릭 없이 바로 프롬프트를 입력할 수 있습니다.
+    """
     if project_url:
         _safe_goto(page, project_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(5000)
 
-        # 프로젝트 페이지에서 새 대화 시작
-        new_chat_btn = page.locator(
-            'button:has-text("New chat"), button:has-text("새 대화"), '
-            'button:has-text("Start chat"), a[href*="/new"]'
-        ).first
-        if new_chat_btn.is_visible():
-            # UI 요소가 겹쳐서 일반 click이 안 될 수 있으므로 force 사용
-            try:
-                new_chat_btn.click(timeout=5000)
-            except Exception:
-                new_chat_btn.click(force=True)
-            page.wait_for_timeout(2000)
+        # 프로젝트 페이지에 있는지 확인
+        current = page.url
+        if "/project/" in current or "/g/" in current:
+            log.info("  프로젝트 페이지 접속 완료: %s", current[:80])
+        else:
+            log.warning("  프로젝트 페이지가 아닙니다. 현재 URL: %s", current[:80])
     else:
         _safe_goto(page, f"{base_url}/new", wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
