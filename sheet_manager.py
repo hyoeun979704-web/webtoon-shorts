@@ -137,9 +137,29 @@ def init_sheet(spreadsheet: gspread.Spreadsheet) -> None:
         ws = spreadsheet.worksheet(TAB_SETTINGS)
         all_rows = ws.get_all_values()
         existing_keys = {row[0].strip() for row in all_rows[1:] if row and row[0].strip()}
+
+        # 마이그레이션 소스 키가 있으면 타겟 키를 추가하지 않음
+        # + 이전에 잘못 추가된 빈 타겟 행 삭제
+        migration_targets = set()
+        rows_to_delete = []
+        for src, targets in _SETTINGS_MIGRATION.items():
+            if src in existing_keys:
+                migration_targets.update(targets)
+                # 빈 값으로 추가된 타겟 행 찾기 (역순으로 삭제)
+                for row_idx, row in enumerate(all_rows[1:], start=2):
+                    key = row[0].strip() if row else ""
+                    val = row[1].strip() if len(row) >= 2 else ""
+                    if key in targets and not val:
+                        rows_to_delete.append(row_idx)
+
+        if rows_to_delete:
+            for row_idx in sorted(rows_to_delete, reverse=True):
+                ws.delete_rows(row_idx)
+            log.info("  [%s] 탭에서 빈 마이그레이션 행 %d개 삭제", TAB_SETTINGS, len(rows_to_delete))
+
         new_rows = []
         for key, val in DEFAULT_SETTINGS.items():
-            if key not in existing_keys:
+            if key not in existing_keys and key not in migration_targets:
                 new_rows.append([key, val, ""])
         if new_rows:
             ws.append_rows(new_rows)
@@ -211,8 +231,9 @@ def read_settings(spreadsheet: gspread.Spreadsheet) -> dict:
                              key, idx + 1, mapped, val[:60] if val else "(빈값)")
                 dup_count[key] = idx + 1
             elif key in ("Claude 키워드 프로젝트 URL", "Claude 대본 프로젝트 URL"):
-                # 이미 새 키 이름을 사용하는 시트
-                settings[key] = val
+                # 새 키 이름: 값이 있을 때만 설정 (빈 행이 마이그레이션 값을 덮어쓰지 않도록)
+                if val:
+                    settings[key] = val
             else:
                 settings[key] = val
 
