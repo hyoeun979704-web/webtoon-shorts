@@ -163,12 +163,18 @@ def navigate_to_project(page: Page, base_url: str, project_url: str = "") -> Non
     if project_url:
         page.goto(project_url, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
+
+        # 프로젝트 페이지에서 새 대화 시작
         new_chat_btn = page.locator(
             'button:has-text("New chat"), button:has-text("새 대화"), '
             'button:has-text("Start chat"), a[href*="/new"]'
         ).first
         if new_chat_btn.is_visible():
-            new_chat_btn.click()
+            # UI 요소가 겹쳐서 일반 click이 안 될 수 있으므로 force 사용
+            try:
+                new_chat_btn.click(timeout=5000)
+            except Exception:
+                new_chat_btn.click(force=True)
             page.wait_for_timeout(2000)
     else:
         page.goto(f"{base_url}/new", wait_until="domcontentloaded")
