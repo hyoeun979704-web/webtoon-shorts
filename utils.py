@@ -126,54 +126,64 @@ def wait_for_response_complete(page: Page, timeout_sec: int = 120) -> None:
 
 
 def get_assistant_response(page: Page) -> str:
-    """페이지에서 마지막 어시스턴트(Claude/ChatGPT) 응답 텍스트를 추출합니다."""
-    selectors = [
-        # ChatGPT
-        "[data-message-author-role='assistant']",
-        # Claude - 다양한 버전 대응
-        ".font-claude-message",
+    """페이지에서 마지막 어시스턴트(Claude/ChatGPT) 응답 텍스트를 추출합니다.
+
+    중복 매칭을 방지하기 위해 가장 구체적인 셀렉터를 우선 사용하고,
+    매칭된 텍스트가 유효한지 검증합니다.
+    """
+    candidates: list[str] = []
+
+    # Claude 우선 셀렉터 (가장 구체적인 것부터)
+    claude_selectors = [
         "[data-testid='chat-message-text']",
-        "[data-is-streaming='false']",
-        "div.grid-cols-1 div.grid > div.relative",
+        ".font-claude-message",
     ]
-    for sel in selectors:
+    # ChatGPT
+    chatgpt_selectors = [
+        "[data-message-author-role='assistant']",
+    ]
+
+    for sel in claude_selectors + chatgpt_selectors:
         try:
             blocks = page.locator(sel).all()
-            if blocks:
-                text = blocks[-1].inner_text().strip()
-                if text:
-                    return text
+            if not blocks:
+                continue
+            text = blocks[-1].inner_text().strip()
+            if text and len(text) > 20:
+                candidates.append(text)
+                break  # 첫 번째 유효한 매칭에서 중단
         except Exception:
             continue
 
-    # 최후 수단: 마크다운 응답 컨테이너에서 텍스트 추출
-    fallback_selectors = [
-        ".prose",
-        ".whitespace-pre-wrap",
-        ".break-words",
-        ".markdown",
-        "[class*='message']",
-        "[class*='Message']",
-        "[class*='response']",
-        "[class*='Response']",
-    ]
-    for sel in fallback_selectors:
-        try:
-            blocks = page.locator(sel).all()
-            if blocks:
+    # 후보가 없으면 폴백 시도
+    if not candidates:
+        fallback_selectors = [
+            "[data-is-streaming='false']",
+            ".prose",
+            ".markdown",
+        ]
+        for sel in fallback_selectors:
+            try:
+                blocks = page.locator(sel).all()
+                if not blocks:
+                    continue
                 text = blocks[-1].inner_text().strip()
-                if len(text) > 20:  # 최소 길이 체크 (버튼 텍스트 등 제외)
-                    return text
-        except Exception:
-            continue
+                if text and len(text) > 20:
+                    candidates.append(text)
+                    break
+            except Exception:
+                continue
 
-    # 디버깅용: 현재 페이지 정보 출력
-    log.error("응답을 찾을 수 없습니다. 현재 URL: %s", page.url)
-    log.error("페이지 제목: %s", page.title())
-    raise RuntimeError(
-        "응답을 가져올 수 없습니다. 페이지 구조가 변경되었을 수 있습니다.\n"
-        f"현재 URL: {page.url}"
-    )
+    if not candidates:
+        log.error("응답을 찾을 수 없습니다. 현재 URL: %s", page.url)
+        log.error("페이지 제목: %s", page.title())
+        raise RuntimeError(
+            "응답을 가져올 수 없습니다. 페이지 구조가 변경되었을 수 있습니다.\n"
+            f"현재 URL: {page.url}"
+        )
+
+    # 가장 짧은 후보 선택 (중복/래핑 요소 방지)
+    return min(candidates, key=len)
 
 
 def send_prompt(page: Page, prompt: str) -> None:
