@@ -20,21 +20,28 @@ TAB_SCRIPT = "대본"
 DEFAULT_SETTINGS = {
     "카테고리": "",
     "키워드 개수": "5",
-    "Claude 프로젝트 URL": "",
+    "Claude 키워드 프로젝트 URL": "",
+    "Claude 대본 프로젝트 URL": "",
     "ChatGPT 프로젝트 URL": "",
-    "Claude 계정": "",
-    "ChatGPT 계정": "",
-    "Typecast 계정": "",
-    "CapCut 계정": "",
     "성우 이름": "",
     "이미지 스타일": "webtoon style, manhwa art, digital illustration",
-    "장면 수": "5",
+    "장면 수": "6",
     "장면당 컷 수": "3~4",
     "총 이미지 수": "15~20",
     "목표 길이(초)": "30",
     "편집 모드": "capcut",
     "대본 검토": "Y",
     "편집 검토": "Y",
+    "Claude 계정": "",
+    "ChatGPT 계정": "",
+    "Typecast 계정": "",
+    "CapCut 계정": "",
+}
+
+# 기존 시트에서 "Claude 프로젝트 URL"이 중복 사용된 경우 마이그레이션 매핑
+_SETTINGS_MIGRATION = {
+    # 기존 키 → (키워드 URL 설명 포함 행, 대본 URL 설명 포함 행)
+    "Claude 프로젝트 URL": ["Claude 키워드 프로젝트 URL", "Claude 대본 프로젝트 URL"],
 }
 
 # ── 작업목록 탭 헤더 ──
@@ -179,13 +186,29 @@ def init_sheet(spreadsheet: gspread.Spreadsheet) -> None:
 # ──────────────────────────────────────────────
 
 def read_settings(spreadsheet: gspread.Spreadsheet) -> dict:
-    """[설정] 탭에서 key-value 쌍을 읽어 dict로 반환합니다."""
+    """[설정] 탭에서 key-value 쌍을 읽어 dict로 반환합니다.
+
+    "Claude 프로젝트 URL" 키가 2개인 레거시 시트도 올바르게 처리합니다.
+    첫 번째 → Claude 키워드 프로젝트 URL, 두 번째 → Claude 대본 프로젝트 URL
+    """
     ws = spreadsheet.worksheet(TAB_SETTINGS)
     rows = ws.get_all_values()
     settings = {}
+    dup_count: dict[str, int] = {}  # 중복 키 카운터
+
     for row in rows[1:]:
         if len(row) >= 2 and row[0].strip():
-            settings[row[0].strip()] = row[1].strip()
+            key = row[0].strip()
+            val = row[1].strip()
+
+            if key in _SETTINGS_MIGRATION:
+                idx = dup_count.get(key, 0)
+                mapped_keys = _SETTINGS_MIGRATION[key]
+                if idx < len(mapped_keys):
+                    settings[mapped_keys[idx]] = val
+                dup_count[key] = idx + 1
+            else:
+                settings[key] = val
     return settings
 
 

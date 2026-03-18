@@ -67,7 +67,7 @@ def _auto_discover_keywords(browser: BrowserManager, spreadsheet, settings: dict
     """대기 작업이 없으면 자동으로 키워드를 발굴합니다."""
     category = settings.get("카테고리", "").strip()
     count = int(settings.get("키워드 개수", "5") or "5")
-    claude_project = settings.get("Claude 프로젝트 URL", "").strip()
+    keyword_project = settings.get("Claude 키워드 프로젝트 URL", "").strip()
 
     log.info("카테고리 [%s]에서 토픽 %d개 자동 발굴 중...", category, count)
 
@@ -77,7 +77,7 @@ def _auto_discover_keywords(browser: BrowserManager, spreadsheet, settings: dict
             claude_page,
             category=category,
             count=count,
-            project_url=claude_project,
+            project_url=keyword_project,
         )
     finally:
         claude_page.close()
@@ -103,12 +103,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
     edit_mode = settings.get("편집 모드", "capcut").strip().lower()
     review_script = settings.get("대본 검토", "Y").strip().upper() == "Y"
     review_edit = settings.get("편집 검토", "Y").strip().upper() == "Y"
-    claude_project = settings.get("Claude 프로젝트 URL", "").strip()
+    script_project = settings.get("Claude 대본 프로젝트 URL", "").strip()
     chatgpt_project = settings.get("ChatGPT 프로젝트 URL", "").strip()
-    image_style = settings.get("이미지 스타일", "webtoon style, manhwa art, digital illustration")
-    scene_count = int(settings.get("장면 수", "5") or "5")
-    cuts_per_scene = settings.get("장면당 컷 수", "3~4")
-    total_images = settings.get("총 이미지 수", "15~20")
 
     sheet_manager.update_task_status(
         spreadsheet, row, "진행중",
@@ -125,11 +121,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             script = generate_script(
                 claude_page,
                 topic=topic,
-                project_url=claude_project,
-                image_style=image_style,
-                scene_count=scene_count,
-                cuts_per_scene=cuts_per_scene,
-                total_images=total_images,
+                project_url=script_project,
             )
         finally:
             claude_page.close()
