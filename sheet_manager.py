@@ -126,7 +126,21 @@ def init_sheet(spreadsheet: gspread.Spreadsheet) -> None:
         needs_setup = True
         log.info("  [%s] 탭 생성 완료", TAB_SETTINGS)
     else:
-        log.info("  [%s] 탭 이미 존재", TAB_SETTINGS)
+        # 기존 설정 탭에 누락된 항목이 있으면 추가
+        ws = spreadsheet.worksheet(TAB_SETTINGS)
+        all_rows = ws.get_all_values()
+        existing_keys = {row[0].strip() for row in all_rows[1:] if row and row[0].strip()}
+        new_rows = []
+        for key, val in DEFAULT_SETTINGS.items():
+            if key not in existing_keys:
+                new_rows.append([key, val, ""])
+        if new_rows:
+            ws.append_rows(new_rows)
+            log.info("  [%s] 탭에 새 항목 %d개 추가: %s",
+                      TAB_SETTINGS, len(new_rows),
+                      ", ".join(r[0] for r in new_rows))
+        else:
+            log.info("  [%s] 탭 이미 존재", TAB_SETTINGS)
 
     # 작업목록 탭
     if TAB_TASKS not in existing:

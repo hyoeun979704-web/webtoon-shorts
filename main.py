@@ -364,14 +364,23 @@ def main():
             log.info("  #%s %s", t["번호"], t["주제"])
 
         # 작업 순서대로 처리
+        failed = 0
         for task in pending:
             log.info("")
             log.info("=" * 50)
             log.info("  작업 #%s: %s", task["번호"], task["주제"])
             log.info("=" * 50)
-            process_task(browser, spreadsheet, task, settings)
+            try:
+                process_task(browser, spreadsheet, task, settings)
+            except Exception as e:
+                log.error("작업 #%s 실패: %s", task["번호"], e)
+                failed += 1
+                continue
 
-    log.info("모든 작업 완료!")
+    if failed:
+        log.warning("완료! (성공 %d건 / 실패 %d건)", len(pending) - failed, failed)
+    else:
+        log.info("모든 작업 완료! (%d건)", len(pending))
 
 
 if __name__ == "__main__":
