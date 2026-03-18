@@ -32,20 +32,25 @@ def _parse_keyword_items(text: str) -> list[dict]:
     items = []
 
     # [카테고리-N] 제목 패턴으로 항목 분리
-    pattern = r"\[([^\]]+)\]\s*(.+)"
-    blocks = re.split(r"(?=\[[^\]]+\]\s+)", text)
+    # 숫자를 포함하는 대괄호만 매칭 (메타데이터 [글자 수:...] 등 제외)
+    header_pattern = r"\[([^\]]*\d+[^\]]*)\]\s*(.+)"
+    blocks = re.split(r"(?=\[[^\]]*\d+[^\]]*\]\s+)", text)
 
     for block in blocks:
         block = block.strip()
         if not block:
             continue
 
-        header_match = re.match(pattern, block)
+        header_match = re.match(header_pattern, block)
         if not header_match:
             continue
 
         number = header_match.group(1).strip()
         title = header_match.group(2).strip()
+
+        # 메타데이터 라인 제외 (글자 수, 채점 등)
+        if "글자 수" in number or "채점" in number:
+            continue
 
         # 키워드 추출
         kw_match = re.search(r"키워드\s*[:：]\s*(.+)", block)

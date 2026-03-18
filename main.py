@@ -119,8 +119,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
     try:
         # ===== 1단계: 대본 생성 =====
-        log.info("[1/4] 대본 생성 중 (Claude) - '%s'", topic)
-        sheet_manager.update_task_status(spreadsheet, row, "1/4 대본 생성중")
+        log.info("[1/3] 대본 생성 중 (Claude) - '%s'", topic)
+        sheet_manager.update_task_status(spreadsheet, row, "1/3 대본 생성중")
 
         claude_page = browser.new_page()
         try:
@@ -133,9 +133,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             claude_page.close()
 
         sheet_manager.update_task_status(
-            spreadsheet, row, "1/4 대본 생성완료",
+            spreadsheet, row, "1/3 대본 생성완료",
             제목=task["주제"],
-            비고=f"대본 {len(script_text)}자",
         )
 
         script_path = os.path.join(project_dir, "script.txt")
@@ -173,7 +172,6 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
             log.info("  나레이션 음성 생성 중...")
             generate_voice(tc_page, script_text, voice_path, actor_name)
-            voice_paths = [voice_path]
             log.info("  음성 생성 완료")
         finally:
             tc_page.close()
@@ -192,7 +190,6 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
             log.info("  썸네일 이미지 생성 중...")
             generate_image(gpt_page, image_prompt, output_path, chatgpt_project)
-            valid_image_paths = [output_path]
             log.info("  이미지 생성 완료")
         finally:
             gpt_page.close()
