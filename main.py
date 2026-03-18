@@ -6,11 +6,9 @@ Google Sheets를 컨트롤 패널로 사용합니다:
   [대본] 탭 - 생성된 대본 확인/수정
 
 사용법:
-    python main.py                 # 전체 자동 실행 (키워드 발굴 → 영상 생성)
-    python main.py --login         # 각 서비스 로그인만 수행 (최초 1회)
+    python main.py    → 메뉴 선택 (1: 실행, 2: 계정 로그인)
 """
 
-import argparse
 import json
 import os
 import time
@@ -18,7 +16,7 @@ import time
 import config
 import sheet_manager
 from browser_manager import BrowserManager, ensure_login
-from keyword_generator import generate_keywords
+from keyword_generator import generate_keywords, select_keyword
 from script_generator import generate_script
 from image_generator import generate_image
 from voice_generator import generate_voice
@@ -27,10 +25,7 @@ from utils import log
 
 
 def login_all(browser: BrowserManager, settings: dict = None):
-    """모든 서비스에 미리 로그인합니다.
-
-    settings에 서비스별 계정 정보가 있으면 로그인 시 안내합니다.
-    """
+    """모든 서비스에 미리 로그인합니다."""
     services = [
         (config.CLAUDE_URL, "Claude", "Claude 계정"),
         (config.CHATGPT_URL, "ChatGPT", "ChatGPT 계정"),
@@ -63,17 +58,21 @@ def _validate_settings(settings: dict) -> None:
         )
 
 
-def _auto_discover_keywords(browser: BrowserManager, spreadsheet, settings: dict) -> None:
-    """대기 작업이 없으면 자동으로 키워드를 발굴합니다."""
+def _discover_and_select_keyword(browser: BrowserManager, settings: dict) -> dict:
+    """키워드 프로젝트 실행 → 응답 파싱 → 6개 중 1개 선택.
+
+    Returns:
+        선택된 키워드 항목 {"number", "title", "keywords", "cta"}
+    """
     category = settings.get("카테고리", "").strip()
-    count = int(settings.get("키워드 개수", "5") or "5")
+    count = int(settings.get("키워드 개수", "6") or "6")
     keyword_project = settings.get("Claude 키워드 프로젝트 URL", "").strip()
 
-    log.info("카테고리 [%s]에서 토픽 %d개 자동 발굴 중...", category, count)
+    log.info("카테고리 [%s]에서 키워드 %d개 발굴 중...", category, count)
 
     claude_page = browser.new_page()
     try:
-        keywords = generate_keywords(
+        items = generate_keywords(
             claude_page,
             category=category,
             count=count,
@@ -82,13 +81,24 @@ def _auto_discover_keywords(browser: BrowserManager, spreadsheet, settings: dict
     finally:
         claude_page.close()
 
-    added = sheet_manager.append_tasks(spreadsheet, keywords)
-    log.info("[작업목록]에 %d건 자동 추가 완료", added)
+    selected = select_keyword(items)
+    return selected
+
+
+def _build_script_prompt(keyword_item: dict) -> str:
+    """선택된 키워드 항목으로 대본 프롬프트를 구성합니다."""
+    parts = [keyword_item["title"]]
+    if keyword_item.get("keywords"):
+        parts.append(f"키워드: {', '.join(keyword_item['keywords'])}")
+    if keyword_item.get("cta"):
+        parts.append(f"CTA 유형: {keyword_item['cta']}")
+    return "\n".join(parts)
 
 
 def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dict):
     """하나의 작업(주제)을 처리합니다."""
-    topic = task["주제"]
+    # 비고에 키워드+CTA 포함 프롬프트가 있으면 그것을 사용
+    topic = str(task.get("비고", "")).strip() or task["주제"]
     task_num = task["번호"]
     row = sheet_manager.find_task_row(spreadsheet, task_num)
 
@@ -177,7 +187,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         try:
             ensure_login(gpt_page, config.CHATGPT_URL, "ChatGPT")
 
-            image_paths = []  # cut 순서와 1:1 매칭 (빈 프롬프트는 빈 문자열)
+            image_paths = []
             os.makedirs(images_dir, exist_ok=True)
 
             sheet_row = 2
@@ -192,7 +202,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                     prompt = cut.get("image_prompt", "").strip()
                     if not prompt:
                         log.warning("  장면 %d 컷 %d: 이미지 프롬프트가 비어있어 건너뜁니다", scene_num, cut_num)
-                        image_paths.append("")  # 빈 슬롯 유지 (인덱스 정합성)
+                        image_paths.append("")
                         sheet_row += 1
                         continue
 
@@ -304,51 +314,67 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         raise
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="웹툰 숏폼 자동 생성기 (Google Sheets 기반)"
-    )
-    parser.add_argument("--login", action="store_true", help="서비스 로그인만 수행 (최초 1회)")
-    parser.add_argument("--headless", action="store_true", help="브라우저 숨김")
-    args = parser.parse_args()
+def _show_menu() -> str:
+    """메인 메뉴를 표시하고 선택을 반환합니다."""
+    print()
+    print("=" * 50)
+    print("  웹툰 숏폼 자동 생성기")
+    print("=" * 50)
+    print("  1. 실행 (키워드 발굴 → 영상 생성)")
+    print("  2. 계정 로그인 (최초 1회)")
+    print("=" * 50)
 
-    if args.headless:
-        config.HEADLESS = True
+    while True:
+        choice = input("  선택 (1-2): ").strip()
+        if choice in ("1", "2"):
+            return choice
+        print("  1 또는 2를 입력해주세요.")
+
+
+def main():
+    choice = _show_menu()
 
     # ===== Google Sheets 연결 =====
     log.info("Google Sheets 연결 중...")
     spreadsheet = sheet_manager.connect(config.GOOGLE_SHEET_URL)
     log.info("  시트 연결 완료: %s", spreadsheet.title)
 
-    # ===== 시트 자동 초기화 (탭이 없으면 생성) =====
     sheet_manager.init_sheet(spreadsheet)
 
-    # ===== 설정 읽기 =====
     settings = sheet_manager.read_settings(spreadsheet)
     log.info("  카테고리: %s", settings.get("카테고리", "(미지정)") or "(미지정)")
     log.info("  성우: %s", settings.get("성우 이름", "(미지정)") or "(미지정)")
 
     with BrowserManager() as browser:
-        # ===== 로그인 (항상 확인) =====
-        login_all(browser, settings)
 
-        # ===== 로그인 전용 모드 =====
-        if args.login:
+        # ===== 2번: 계정 로그인만 =====
+        if choice == "2":
+            login_all(browser, settings)
             log.info("로그인 전용 모드 - 작업 없이 종료합니다.")
             return
 
-        # ===== 필수 설정 검증 =====
+        # ===== 1번: 실행 (로그인 건너뜀) =====
         _validate_settings(settings)
 
-        # 대기 작업 확인 → 없으면 자동으로 키워드 발굴
+        # 대기 작업 확인
         pending = sheet_manager.get_pending_tasks(spreadsheet)
+
         if not pending:
-            log.info("대기 작업이 없어 키워드를 자동 발굴합니다...")
-            _auto_discover_keywords(browser, spreadsheet, settings)
+            # 키워드 프로젝트 실행 → 파싱 → 1개 선택 → 작업 추가
+            log.info("대기 작업이 없어 키워드를 발굴합니다...")
+            selected = _discover_and_select_keyword(browser, settings)
+
+            # 선택된 키워드의 제목+키워드+CTA를 주제로 작업 추가
+            topic_text = _build_script_prompt(selected)
+            added = sheet_manager.append_tasks(spreadsheet, [
+                {"topic": selected["title"], "hook": topic_text}
+            ])
+            log.info("[작업목록]에 %d건 추가 완료", added)
+
             pending = sheet_manager.get_pending_tasks(spreadsheet)
 
         if not pending:
-            log.error("키워드 발굴 후에도 대기 작업이 없습니다. 시트를 확인해주세요.")
+            log.error("대기 작업이 없습니다. 시트를 확인해주세요.")
             return
 
         log.info("처리할 작업: %d건", len(pending))
