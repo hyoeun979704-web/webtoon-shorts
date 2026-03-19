@@ -128,62 +128,83 @@ def wait_for_response_complete(page: Page, timeout_sec: int = 120) -> None:
 def get_assistant_response(page: Page) -> str:
     """페이지에서 마지막 어시스턴트(Claude/ChatGPT) 응답 텍스트를 추출합니다.
 
-    중복 매칭을 방지하기 위해 가장 구체적인 셀렉터를 우선 사용하고,
-    매칭된 텍스트가 유효한지 검증합니다.
+    Claude 확장 사고(thinking) 블록을 제외하고 순수 응답만 추출합니다.
     """
-    candidates: list[str] = []
+    # 1차: JavaScript로 thinking 블록 제외하여 텍스트 추출
+    try:
+        text = page.evaluate("""
+            () => {
+                // Claude 응답 요소 탐색
+                const selectors = [
+                    '[data-testid="chat-message-text"]',
+                    '.font-claude-message',
+                    '[data-message-author-role="assistant"]',
+                ];
+                for (const sel of selectors) {
+                    const els = document.querySelectorAll(sel);
+                    if (els.length === 0) continue;
+                    const last = els[els.length - 1];
+                    // thinking/reasoning 블록 제거한 클론 생성
+                    const clone = last.cloneNode(true);
+                    const removes = clone.querySelectorAll(
+                        'details, [data-testid*="thinking"], [class*="thinking"], ' +
+                        '[class*="Thinking"], summary, [data-testid*="reasoning"]'
+                    );
+                    removes.forEach(el => el.remove());
+                    const t = clone.innerText.trim();
+                    if (t && t.length > 20) return t;
+                }
+                return '';
+            }
+        """)
+        if text and len(text) > 20:
+            return _strip_thinking_prefix(text)
+    except Exception as e:
+        log.debug("JS 응답 추출 실패, 폴백 사용: %s", e)
 
-    # Claude 우선 셀렉터 (가장 구체적인 것부터)
-    claude_selectors = [
+    # 2차: 기존 셀렉터 방식 폴백
+    selectors = [
         "[data-testid='chat-message-text']",
         ".font-claude-message",
-    ]
-    # ChatGPT
-    chatgpt_selectors = [
         "[data-message-author-role='assistant']",
+        "[data-is-streaming='false']",
+        ".prose",
+        ".markdown",
     ]
-
-    for sel in claude_selectors + chatgpt_selectors:
+    for sel in selectors:
         try:
             blocks = page.locator(sel).all()
             if not blocks:
                 continue
             text = blocks[-1].inner_text().strip()
             if text and len(text) > 20:
-                candidates.append(text)
-                break  # 첫 번째 유효한 매칭에서 중단
+                return _strip_thinking_prefix(text)
         except Exception:
             continue
 
-    # 후보가 없으면 폴백 시도
-    if not candidates:
-        fallback_selectors = [
-            "[data-is-streaming='false']",
-            ".prose",
-            ".markdown",
-        ]
-        for sel in fallback_selectors:
-            try:
-                blocks = page.locator(sel).all()
-                if not blocks:
-                    continue
-                text = blocks[-1].inner_text().strip()
-                if text and len(text) > 20:
-                    candidates.append(text)
-                    break
-            except Exception:
-                continue
+    log.error("응답을 찾을 수 없습니다. 현재 URL: %s", page.url)
+    raise RuntimeError(
+        "응답을 가져올 수 없습니다. 페이지 구조가 변경되었을 수 있습니다.\n"
+        f"현재 URL: {page.url}"
+    )
 
-    if not candidates:
-        log.error("응답을 찾을 수 없습니다. 현재 URL: %s", page.url)
-        log.error("페이지 제목: %s", page.title())
-        raise RuntimeError(
-            "응답을 가져올 수 없습니다. 페이지 구조가 변경되었을 수 있습니다.\n"
-            f"현재 URL: {page.url}"
-        )
 
-    # 가장 짧은 후보 선택 (중복/래핑 요소 방지)
-    return min(candidates, key=len)
+def _strip_thinking_prefix(text: str) -> str:
+    """응답 앞부분에 포함된 Claude 확장 사고 요약 텍스트를 제거합니다.
+
+    Claude가 thinking 블록 요약을 응답 앞에 붙이는 경우가 있어
+    첫 줄이 중복되면 제거합니다.
+    """
+    lines = text.split("\n")
+    if len(lines) < 3:
+        return text
+
+    # 첫 줄이 두 번 반복되면 첫 번째를 제거
+    first = lines[0].strip()
+    if first and len(lines) > 1 and lines[1].strip() == first:
+        lines = lines[1:]
+
+    return "\n".join(lines)
 
 
 def send_prompt(page: Page, prompt: str) -> None:

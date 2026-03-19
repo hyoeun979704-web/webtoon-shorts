@@ -9,6 +9,7 @@ Claude 키워드 프로젝트에 카테고리를 전송하면
     CTA 유형: 링크 클릭 유도
 """
 
+import os
 import re
 
 from playwright.sync_api import Page
@@ -31,9 +32,11 @@ def _parse_keyword_items(text: str) -> list[dict]:
     """
     items = []
 
-    # [카테고리-N] 제목 패턴으로 항목 분리
-    # 숫자를 포함하는 대괄호만 매칭 (메타데이터 [글자 수:...] 등 제외)
+    # [카테고리-N] 제목 패턴 (숫자 포함 대괄호)
+    # 예: [모바일-1], [인터넷-2], [렌탈가전-1], [세트1]
     header_pattern = r"\[([^\]]*\d+[^\]]*)\]\s*(.+)"
+
+    # 방법 1: 대괄호 패턴으로 블록 분리
     blocks = re.split(r"(?=\[[^\]]*\d+[^\]]*\]\s+)", text)
 
     for block in blocks:
@@ -68,7 +71,59 @@ def _parse_keyword_items(text: str) -> list[dict]:
             "cta": cta,
         })
 
+    # 방법 2: 블록 분리 실패 시 라인별로 탐색
+    if not items:
+        lines = text.split("\n")
+        current_item = None
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            header_match = re.search(header_pattern, line)
+            if header_match:
+                number = header_match.group(1).strip()
+                if "글자 수" in number or "채점" in number:
+                    continue
+                title = header_match.group(2).strip()
+                current_item = {
+                    "number": number,
+                    "title": title,
+                    "keywords": [],
+                    "cta": "",
+                }
+                items.append(current_item)
+                continue
+
+            if current_item:
+                kw_match = re.match(r"키워드\s*[:：]\s*(.+)", line)
+                if kw_match:
+                    kw_str = kw_match.group(1).strip()
+                    current_item["keywords"] = [
+                        k.strip() for k in kw_str.split(",") if k.strip()
+                    ]
+                    continue
+
+                cta_match = re.match(r"CTA\s*유형\s*[:：]\s*(.+)", line)
+                if cta_match:
+                    current_item["cta"] = cta_match.group(1).strip()
+                    continue
+
     return items
+
+
+def _save_response_debug(response: str, category: str) -> str:
+    """디버깅용으로 전체 응답을 파일에 저장합니다."""
+    debug_dir = os.path.join(os.path.dirname(__file__), "temp")
+    os.makedirs(debug_dir, exist_ok=True)
+    debug_path = os.path.join(debug_dir, "last_keyword_response.txt")
+    with open(debug_path, "w", encoding="utf-8") as f:
+        f.write(f"카테고리: {category}\n")
+        f.write(f"응답 길이: {len(response)}자\n")
+        f.write("=" * 60 + "\n")
+        f.write(response)
+    return debug_path
 
 
 def generate_keywords(
@@ -95,12 +150,18 @@ def generate_keywords(
     log.info("Claude 키워드 프로젝트에 요청 중 (%s, %d개)...", category, count)
 
     response = send_and_wait(page, prompt)
+
+    # 디버깅용 응답 저장
+    debug_path = _save_response_debug(response, category)
+    log.info("응답 저장됨: %s (%d자)", debug_path, len(response))
+
     items = _parse_keyword_items(response)
 
     if not items:
         raise ValueError(
             f"키워드 항목을 파싱할 수 없습니다. 카테고리: {category}\n"
-            f"응답 앞부분: {response[:300]}"
+            f"전체 응답은 {debug_path} 파일을 확인하세요.\n"
+            f"응답 앞부분 (800자):\n{response[:800]}"
         )
 
     log.info("키워드 %d개 파싱 완료", len(items))
