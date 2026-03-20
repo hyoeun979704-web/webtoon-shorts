@@ -238,10 +238,30 @@ def send_prompt(page: Page, prompt: str) -> None:
 
 
 def send_and_wait(page: Page, prompt: str, timeout_sec: int = 120) -> str:
-    """프롬프트 전송 → 응답 완료 대기 → 응답 텍스트 반환."""
+    """프롬프트 전송 → 응답 완료 대기 → 응답 텍스트 반환.
+
+    첫 대기 후 응답을 찾지 못하면 30초 간격으로 최대 10분까지 재확인합니다.
+    """
     send_prompt(page, prompt)
     wait_for_response_complete(page, timeout_sec)
-    return get_assistant_response(page)
+
+    # 응답 추출 시도 → 실패 시 30초 간격으로 재확인 (최대 10분)
+    max_retry_sec = 600
+    retry_interval = 30
+    elapsed = 0
+
+    while True:
+        try:
+            return get_assistant_response(page)
+        except RuntimeError:
+            elapsed += retry_interval
+            if elapsed > max_retry_sec:
+                raise
+            log.info(
+                "응답이 아직 준비되지 않았습니다. %d초 후 재확인합니다... (경과: %d초/%d초)",
+                retry_interval, elapsed, max_retry_sec,
+            )
+            page.wait_for_timeout(retry_interval * 1000)
 
 
 def _safe_goto(page: Page, url: str, **kwargs):
