@@ -227,22 +227,10 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                 장면수=len(structured["scenes"]),
             )
 
-        # ===== 3단계: 음성 생성 (장면별) =====
-        log.info("[3/5] 음성 생성 중 (Typecast) - %d장면...", len(structured["scenes"]))
-        sheet_manager.update_task_status(spreadsheet, row, "3/5 음성 생성중")
-
-        tc_page = browser.new_page()
-        try:
-            voice_paths = generate_voices_per_scene(
-                tc_page,
-                structured["scenes"],
-                voices_dir,
-                actor_name,
-                editor_url=typecast_editor_url,
-            )
-            log.info("  음성 생성 완료 (%d개 파일)", len(voice_paths))
-        finally:
-            tc_page.close()
+        # ===== 3단계: 음성 생성 (건너뜀 - 수동 처리) =====
+        log.info("[3/5] 음성 생성 건너뜀 (수동 처리)")
+        sheet_manager.update_task_status(spreadsheet, row, "3/5 음성 생성 건너뜀")
+        voice_paths = []
 
         # ===== 4단계: 이미지 생성 (컷별, 같은 대화 유지) =====
         log.info("[4/5] 이미지 생성 중 (ChatGPT DALL-E) - %d컷...", total_cuts)
