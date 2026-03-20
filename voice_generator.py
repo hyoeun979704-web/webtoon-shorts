@@ -104,14 +104,30 @@ def _wait_for_editor_load(page: Page) -> None:
 # 대시보드 → 에디터 진입
 # ──────────────────────────────────────────────
 
-def _is_on_editor(page: Page) -> bool:
-    """에디터 페이지에 있는지 확인.
+def _is_project_url(url: str) -> bool:
+    """에디터(프로젝트) URL인지 판별합니다.
 
-    URL 패턴: /editor/ 또는 /editor가 포함된 경우
-    또는 "스크립트를 입력해 주세요" placeholder가 보이는 경우
+    대시보드: /text-to-speech (프로젝트 ID 없음)
+    에디터:   /text-to-speech/69bce9da230258525835449e (프로젝트 ID 있음)
+              /text-to-speech/editor/xxx (구형 URL)
+              /editor/xxx
     """
-    url = page.url.lower()
-    if "typecast" in url and "/editor" in url:
+    import re
+    url_lower = url.lower()
+    if "typecast" not in url_lower:
+        return False
+    # /text-to-speech/{hex ID} 패턴
+    if re.search(r'/text-to-speech/[0-9a-f]{10,}', url_lower):
+        return True
+    # /editor 패턴
+    if "/editor" in url_lower:
+        return True
+    return False
+
+
+def _is_on_editor(page: Page) -> bool:
+    """현재 페이지가 에디터인지 확인 (URL 또는 UI 요소)."""
+    if _is_project_url(page.url):
         return True
     # URL로 판별 불가 시 UI 요소로 판별
     try:
@@ -446,7 +462,7 @@ def _ensure_editor_ready(page: Page, actor_name: str, editor_url: str = "") -> N
     editor_url에 /editor가 포함되어 있으면 → 바로 에디터로 이동
     아니면 (대시보드 URL) → 대시보드에서 프로젝트 열기
     """
-    has_editor_url = bool(editor_url and "/editor" in editor_url.lower())
+    has_project_url = bool(editor_url and _is_project_url(editor_url))
     target_url = editor_url if editor_url else f"{config.TYPECAST_URL}/text-to-speech"
 
     # 1. 대상 URL로 이동
@@ -460,13 +476,12 @@ def _ensure_editor_ready(page: Page, actor_name: str, editor_url: str = "") -> N
         _safe_goto(page, target_url, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
 
-    # 3. 에디터 URL이면 바로 에디터 로드 대기, 아니면 프로젝트 열기
-    if has_editor_url:
-        log.info("    에디터 URL로 직접 진입")
-        # 에디터 URL로 갔는데 리다이렉트되어 대시보드에 있을 수 있음
-        current = page.url.lower()
-        if "/editor" not in current:
-            log.info("    리다이렉트 감지 → 다시 에디터 URL로 이동")
+    # 3. 프로젝트 URL이면 바로 에디터 로드 대기, 아니면 프로젝트 열기
+    if has_project_url:
+        log.info("    프로젝트 URL로 직접 진입")
+        # 리다이렉트 감지
+        if not _is_on_editor(page):
+            log.info("    리다이렉트 감지 → 다시 프로젝트 URL로 이동")
             _safe_goto(page, target_url, wait_until="domcontentloaded")
             page.wait_for_timeout(5000)
     else:
