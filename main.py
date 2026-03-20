@@ -2,8 +2,12 @@
 
 Google Sheets를 컨트롤 패널로 사용합니다:
   [설정] 탭 - 카테고리, 프로젝트 URL, 성우, 스타일 등
-  [작업목록] 탭 - '대기' 상태 작업을 순서대로 처리
+  [작업목록] 탭 - 작업 큐 (상태: 대기/대본완료)
   [대본] 탭 - 생성된 대본 확인/수정
+
+작업 상태별 동작:
+  '대기'     → 1단계(대본 생성)부터 전체 파이프라인 실행
+  '대본완료' → 시트 [대본] 탭의 대본을 사용, 3단계(음성)부터 실행
 
 사용법:
     python main.py           → 실행 (키워드 발굴 → 영상 생성)
@@ -106,10 +110,16 @@ def _dedup_topic(text: str) -> str:
 
 
 def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dict):
-    """하나의 작업(주제)을 처리합니다."""
+    """하나의 작업(주제)을 처리합니다.
+
+    작업 상태에 따라 시작 단계가 달라집니다:
+      '대기'     → 1단계(대본 생성)부터 시작
+      '대본완료' → 시트 [대본] 탭의 대본을 사용, 3단계(음성)부터 시작
+    """
     # 비고에 키워드+CTA 포함 프롬프트가 있으면 그것을 사용
     topic = _dedup_topic(str(task.get("비고", "")).strip() or task["주제"])
     task_num = task["번호"]
+    task_status = str(task.get("상태", "")).strip()
     row = sheet_manager.find_task_row(spreadsheet, task_num)
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -132,63 +142,89 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
     edit_mode = settings.get("편집 모드", "capcut").strip().lower()
     review_edit = settings.get("편집 검토", "Y").strip().upper() == "Y"
 
-    try:
-        # ===== 1단계: 대본 생성 + 구조화 =====
-        log.info("[1/5] 대본 생성 중 (Claude) - '%s'", topic)
-        sheet_manager.update_task_status(spreadsheet, row, "1/5 대본 생성중")
+    # 시트 대본 기반 실행 여부 판단
+    skip_script_gen = task_status == "대본완료"
 
-        claude_page = browser.new_page()
-        try:
-            script_text = generate_script(
-                claude_page,
-                topic=topic,
-                project_url=script_project,
+    try:
+        if skip_script_gen:
+            # ===== 시트 대본 읽기 (1~2단계 건너뜀) =====
+            log.info("[대본완료] 시트 [대본] 탭에서 대본을 읽습니다...")
+            script_data = sheet_manager.read_script_from_sheet(spreadsheet)
+            if not script_data or not script_data.get("scenes"):
+                raise ValueError(
+                    "시트 [대본] 탭에 대본이 없습니다. "
+                    "장면번호/컷번호/나레이션/이미지 프롬프트를 입력해주세요."
+                )
+
+            script_data["title"] = task["주제"]
+            structured = script_data
+
+            total_cuts = sum(len(s.get("cuts", [])) for s in structured["scenes"])
+            log.info("  시트 대본 로드: %d장면, %d컷", len(structured["scenes"]), total_cuts)
+
+            sheet_manager.update_task_status(
+                spreadsheet, row, "2/5 구조화완료",
+                제목=task["주제"],
+                장면수=len(structured["scenes"]),
             )
 
-            script_path = os.path.join(project_dir, "script.txt")
-            with open(script_path, "w", encoding="utf-8") as f:
-                f.write(script_text)
+        else:
+            # ===== 1단계: 대본 생성 + 구조화 =====
+            log.info("[1/5] 대본 생성 중 (Claude) - '%s'", topic)
+            sheet_manager.update_task_status(spreadsheet, row, "1/5 대본 생성중")
 
-            log.info("  대본 (%d자): %s...", len(script_text), script_text[:100])
+            claude_page = browser.new_page()
+            try:
+                script_text = generate_script(
+                    claude_page,
+                    topic=topic,
+                    project_url=script_project,
+                )
 
-            # ===== 검토 포인트 1: 대본 검토 =====
-            if review_script:
-                sheet_manager.update_task_status(spreadsheet, row, "대본 검토 대기")
-                log.info("")
-                log.info("=" * 50)
-                log.info("  [대본 검토] 추출된 대본:")
-                log.info("")
-                log.info("  %s", script_text)
-                log.info("")
-                log.info("  수정하려면 새 대본을 입력, 그대로 진행하려면 Enter")
-                log.info("=" * 50)
-                user_input = input("  → 대본 수정 (Enter=유지): ").strip()
-                if user_input:
-                    script_text = user_input
-                    with open(script_path, "w", encoding="utf-8") as f:
-                        f.write(script_text)
-                    log.info("  대본이 수정되었습니다.")
+                script_path = os.path.join(project_dir, "script.txt")
+                with open(script_path, "w", encoding="utf-8") as f:
+                    f.write(script_text)
 
-            # ===== 구조화: 같은 Claude 대화에서 장면/컷/이미지 프롬프트 생성 =====
-            log.info("[2/5] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
-            sheet_manager.update_task_status(spreadsheet, row, "2/5 구조화중")
+                log.info("  대본 (%d자): %s...", len(script_text), script_text[:100])
 
-            structured = structure_script(claude_page, script_text, settings)
-        finally:
-            claude_page.close()
+                # ===== 검토 포인트 1: 대본 검토 =====
+                if review_script:
+                    sheet_manager.update_task_status(spreadsheet, row, "대본 검토 대기")
+                    log.info("")
+                    log.info("=" * 50)
+                    log.info("  [대본 검토] 추출된 대본:")
+                    log.info("")
+                    log.info("  %s", script_text)
+                    log.info("")
+                    log.info("  수정하려면 새 대본을 입력, 그대로 진행하려면 Enter")
+                    log.info("=" * 50)
+                    user_input = input("  → 대본 수정 (Enter=유지): ").strip()
+                    if user_input:
+                        script_text = user_input
+                        with open(script_path, "w", encoding="utf-8") as f:
+                            f.write(script_text)
+                        log.info("  대본이 수정되었습니다.")
 
-        # 구조화된 대본을 시트에 반영
-        script_data = {"title": task["주제"], "scenes": structured["scenes"]}
-        sheet_manager.write_script_to_sheet(spreadsheet, script_data)
+                # ===== 구조화: 같은 Claude 대화에서 장면/컷/이미지 프롬프트 생성 =====
+                log.info("[2/5] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
+                sheet_manager.update_task_status(spreadsheet, row, "2/5 구조화중")
 
-        total_cuts = sum(len(s.get("cuts", [])) for s in structured["scenes"])
-        log.info("  시트 반영 완료: %d장면, %d컷", len(structured["scenes"]), total_cuts)
+                structured = structure_script(claude_page, script_text, settings)
+            finally:
+                claude_page.close()
 
-        sheet_manager.update_task_status(
-            spreadsheet, row, "2/5 구조화완료",
-            제목=task["주제"],
-            장면수=len(structured["scenes"]),
-        )
+            # 구조화된 대본을 시트에 반영
+            script_data = {"title": task["주제"], "scenes": structured["scenes"]}
+            sheet_manager.write_script_to_sheet(spreadsheet, script_data)
+
+            total_cuts = sum(len(s.get("cuts", [])) for s in structured["scenes"])
+            log.info("  시트 반영 완료: %d장면, %d컷", len(structured["scenes"]), total_cuts)
+
+            sheet_manager.update_task_status(
+                spreadsheet, row, "2/5 구조화완료",
+                제목=task["주제"],
+                장면수=len(structured["scenes"]),
+            )
 
         # ===== 3단계: 음성 생성 (장면별) =====
         log.info("[3/5] 음성 생성 중 (Typecast) - %d장면...", len(structured["scenes"]))

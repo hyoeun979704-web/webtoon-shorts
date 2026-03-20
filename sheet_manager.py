@@ -257,9 +257,17 @@ def read_tasks(spreadsheet: gspread.Spreadsheet) -> list[dict]:
 
 
 def get_pending_tasks(spreadsheet: gspread.Spreadsheet) -> list[dict]:
-    """상태가 '대기'인 작업만 반환합니다."""
+    """처리 대상 작업을 반환합니다.
+
+    대상 상태:
+      - '대기': 1단계(대본 생성)부터 전체 실행
+      - '대본완료': 시트 [대본] 탭의 대본을 사용, 3단계(음성)부터 실행
+    """
     tasks = read_tasks(spreadsheet)
-    return [t for t in tasks if str(t.get("상태", "")).strip() == "대기"]
+    return [
+        t for t in tasks
+        if str(t.get("상태", "")).strip() in ("대기", "대본완료")
+    ]
 
 
 def update_task_status(
