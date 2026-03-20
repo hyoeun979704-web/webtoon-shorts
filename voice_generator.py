@@ -93,41 +93,130 @@ def _ensure_editor(page: Page, actor_name: str, editor_url: str = "") -> None:
             log.warning("성우 '%s'를 검색 결과에서 찾을 수 없습니다. 기본 성우로 진행합니다.", actor_name)
 
 
+def _take_debug_screenshot(page: Page, label: str) -> None:
+    """디버깅용 스크린샷을 저장합니다."""
+    debug_dir = os.path.join(os.path.dirname(__file__), "temp")
+    os.makedirs(debug_dir, exist_ok=True)
+    path = os.path.join(debug_dir, f"typecast_debug_{label}.png")
+    try:
+        page.screenshot(path=path, full_page=True)
+        log.info("    디버그 스크린샷: %s", path)
+    except Exception as e:
+        log.warning("    스크린샷 저장 실패: %s", e)
+
+
 def _synthesize_and_download(page: Page, text: str, output_path: str) -> str:
     """현재 에디터에서 텍스트를 합성하고 다운로드합니다."""
-    # 텍스트 입력
-    text_input = page.locator(
-        'textarea, [contenteditable="true"], [role="textbox"]'
-    ).first
-    text_input.wait_for(timeout=10000)
+    # 텍스트 입력 - 다양한 셀렉터 시도
+    _TEXT_SELECTORS = [
+        'textarea',
+        '[contenteditable="true"]',
+        '[role="textbox"]',
+        '.text-area',
+        '#text-input',
+        'div[data-placeholder]',
+    ]
+    text_input = None
+    for sel in _TEXT_SELECTORS:
+        loc = page.locator(sel).first
+        try:
+            if loc.is_visible(timeout=2000):
+                text_input = loc
+                break
+        except Exception:
+            continue
+
+    if not text_input:
+        _take_debug_screenshot(page, "no_text_input")
+        raise RuntimeError(
+            "Typecast 텍스트 입력창을 찾을 수 없습니다. "
+            "temp/typecast_debug_no_text_input.png 스크린샷을 확인하세요."
+        )
+
     text_input.click()
     text_input.press("Control+a")
-    text_input.fill(text)
+    page.wait_for_timeout(300)
+
+    # fill()이 안 되는 contenteditable 대비
+    try:
+        text_input.fill(text)
+    except Exception:
+        text_input.press("Control+a")
+        page.keyboard.type(text, delay=10)
     page.wait_for_timeout(500)
 
-    # 음성 합성
-    generate_btn = page.locator(
-        'button:has-text("합성"), button:has-text("생성"), '
-        'button:has-text("Generate"), button:has-text("Play")'
-    ).first
-    generate_btn.wait_for(timeout=5000)
+    # 음성 합성 버튼 - 다양한 텍스트/셀렉터 시도
+    _GEN_SELECTORS = [
+        'button:has-text("합성")',
+        'button:has-text("생성")',
+        'button:has-text("재생")',
+        'button:has-text("변환")',
+        'button:has-text("듣기")',
+        'button:has-text("Play")',
+        'button:has-text("Generate")',
+        'button:has-text("Convert")',
+        'button:has-text("Listen")',
+        'button:has-text("TTS")',
+        # 아이콘 전용 버튼 (재생/합성 아이콘)
+        'button[aria-label*="play"]',
+        'button[aria-label*="Play"]',
+        'button[aria-label*="생성"]',
+        'button[aria-label*="합성"]',
+        'button[aria-label*="재생"]',
+    ]
+    generate_btn = None
+    for sel in _GEN_SELECTORS:
+        loc = page.locator(sel).first
+        try:
+            if loc.is_visible(timeout=1000):
+                generate_btn = loc
+                log.info("    합성 버튼 발견: %s", sel)
+                break
+        except Exception:
+            continue
+
+    if not generate_btn:
+        _take_debug_screenshot(page, "no_generate_btn")
+        raise RuntimeError(
+            "Typecast 합성 버튼을 찾을 수 없습니다. "
+            "temp/typecast_debug_no_generate_btn.png 스크린샷을 확인하세요."
+        )
+
     generate_btn.click()
 
     # 합성 완료 대기
     log.info("    음성 합성 대기 중...")
+    _DL_SELECTORS = [
+        'button:has-text("다운로드")',
+        'button:has-text("Download")',
+        'button:has-text("내보내기")',
+        'button:has-text("Export")',
+        'button:has-text("저장")',
+        'button:has-text("Save")',
+        'a[download]',
+        'button[aria-label*="download"]',
+        'button[aria-label*="Download"]',
+        'button[aria-label*="다운로드"]',
+    ]
     download_btn = None
     for _ in range(120):
         page.wait_for_timeout(1000)
-        btn = page.locator(
-            'button:has-text("다운로드"), button:has-text("Download"), '
-            'button:has-text("내보내기"), button:has-text("Export"), '
-            'a[download]'
-        ).first
-        if btn.is_visible():
-            download_btn = btn
+        for sel in _DL_SELECTORS:
+            loc = page.locator(sel).first
+            try:
+                if loc.is_visible():
+                    download_btn = loc
+                    break
+            except Exception:
+                continue
+        if download_btn:
             break
     else:
-        raise TimeoutError("Typecast 음성 합성 타임아웃 (2분)")
+        _take_debug_screenshot(page, "no_download_btn")
+        raise TimeoutError(
+            "Typecast 음성 합성 타임아웃 (2분). "
+            "temp/typecast_debug_no_download_btn.png 스크린샷을 확인하세요."
+        )
 
     # 다운로드
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
