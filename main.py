@@ -6,9 +6,11 @@ Google Sheets를 컨트롤 패널로 사용합니다:
   [대본] 탭 - 생성된 대본 확인/수정
 
 사용법:
-    python main.py    → 메뉴 선택 (1: 실행, 2: 계정 로그인)
+    python main.py           → 실행 (키워드 발굴 → 영상 생성)
+    python main.py --login   → 계정 로그인만 수행
 """
 
+import argparse
 import os
 import time
 
@@ -214,20 +216,9 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
 
 def main():
-    # ===== 메뉴 선택 (1회만) =====
-    print()
-    print("=" * 50)
-    print("  웹툰 숏폼 자동 생성기")
-    print("=" * 50)
-    print("  1. 실행 (키워드 발굴 → 영상 생성)")
-    print("  2. 계정 로그인 (최초 1회)")
-    print("=" * 50)
-
-    while True:
-        choice = input("  선택 (1-2): ").strip()
-        if choice in ("1", "2"):
-            break
-        print("  1 또는 2를 입력해주세요.")
+    parser = argparse.ArgumentParser(description="웹툰 숏폼 자동 생성기")
+    parser.add_argument("--login", action="store_true", help="계정 로그인만 수행 (최초 1회)")
+    args = parser.parse_args()
 
     # ===== Google Sheets 연결 =====
     log.info("Google Sheets 연결 중...")
@@ -242,13 +233,13 @@ def main():
 
     with BrowserManager() as browser:
 
-        # ===== 2번: 계정 로그인만 =====
-        if choice == "2":
+        # ===== 로그인 전용 모드 =====
+        if args.login:
             login_all(browser, settings)
-            log.info("로그인 전용 모드 - 작업 없이 종료합니다.")
+            log.info("로그인 완료 - 종료합니다.")
             return
 
-        # ===== 1번: 실행 (로그인 건너뜀) =====
+        # ===== 실행 모드 (로그인 건너뜀) =====
         _validate_settings(settings)
 
         # 대기 작업 확인
