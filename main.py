@@ -57,11 +57,7 @@ def _validate_settings(settings: dict) -> None:
 
 
 def _discover_and_select_keyword(browser: BrowserManager, settings: dict) -> dict:
-    """키워드 프로젝트 실행 → 응답 파싱 → 6개 중 1개 선택.
-
-    Returns:
-        선택된 키워드 항목 {"number", "title", "keywords", "cta"}
-    """
+    """키워드 프로젝트 실행 → 응답 파싱 → 1개 선택."""
     category = settings.get("카테고리", "").strip()
     count = int(settings.get("키워드 개수", "6") or "6")
     keyword_project = settings.get("Claude 키워드 프로젝트 URL", "").strip()
@@ -132,6 +128,9 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         finally:
             claude_page.close()
 
+        # 대본을 장면으로 분할하여 시트에 반영
+        sheet_manager.write_plain_script_to_sheet(spreadsheet, task["주제"], script_text)
+
         sheet_manager.update_task_status(
             spreadsheet, row, "1/3 대본 생성완료",
             제목=task["주제"],
@@ -159,6 +158,9 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                 script_text = user_input
                 with open(script_path, "w", encoding="utf-8") as f:
                     f.write(script_text)
+                sheet_manager.write_plain_script_to_sheet(
+                    spreadsheet, task["주제"], script_text
+                )
                 log.info("  대본이 수정되었습니다.")
 
         # ===== 2단계: 음성 생성 =====
@@ -211,8 +213,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         raise
 
 
-def _show_menu() -> str:
-    """메인 메뉴를 표시하고 선택을 반환합니다."""
+def main():
+    # ===== 메뉴 선택 (1회만) =====
     print()
     print("=" * 50)
     print("  웹툰 숏폼 자동 생성기")
@@ -224,12 +226,8 @@ def _show_menu() -> str:
     while True:
         choice = input("  선택 (1-2): ").strip()
         if choice in ("1", "2"):
-            return choice
+            break
         print("  1 또는 2를 입력해주세요.")
-
-
-def main():
-    choice = _show_menu()
 
     # ===== Google Sheets 연결 =====
     log.info("Google Sheets 연결 중...")

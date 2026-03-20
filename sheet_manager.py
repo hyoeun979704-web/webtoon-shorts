@@ -323,6 +323,77 @@ def find_task_row(spreadsheet: gspread.Spreadsheet, task_number) -> int:
 # 대본 읽기/쓰기
 # ──────────────────────────────────────────────
 
+def _split_text_to_scenes(text: str) -> list[dict]:
+    """대본 텍스트를 문장 단위로 나누어 장면을 구성합니다.
+
+    한국어 문장 종결 패턴(다, 요, 니다, !, ?)으로 분리하여
+    2~3문장씩 묶어 장면을 만듭니다.
+    """
+    import re
+
+    # 문장 분리: 마침표/느낌표/물음표 뒤 공백 기준
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    if not sentences:
+        return [{
+            "scene_number": 1,
+            "narration": text,
+            "cuts": [{"cut_number": 1, "image_prompt": "", "subtitle": text, "sfx": ""}],
+            "transition": "",
+        }]
+
+    # 대본 길이에 따라 장면 수 결정
+    total_len = len(text)
+    if total_len <= 100:
+        target_scenes = 2
+    elif total_len <= 200:
+        target_scenes = 3
+    elif total_len <= 300:
+        target_scenes = 4
+    else:
+        target_scenes = 5
+
+    # 문장 수가 장면 수보다 적으면 조정
+    target_scenes = min(target_scenes, len(sentences))
+
+    # 문장을 장면에 균등 분배
+    per_scene = max(1, len(sentences) // target_scenes)
+    scenes = []
+
+    for i in range(0, len(sentences), per_scene):
+        chunk = sentences[i:i + per_scene]
+        narration = " ".join(chunk)
+        scenes.append({
+            "scene_number": len(scenes) + 1,
+            "narration": narration,
+            "cuts": [{
+                "cut_number": 1,
+                "image_prompt": "",
+                "subtitle": narration,
+                "sfx": "",
+            }],
+            "transition": "",
+        })
+
+    return scenes
+
+
+def write_plain_script_to_sheet(
+    spreadsheet: gspread.Spreadsheet,
+    title: str,
+    script_text: str,
+) -> None:
+    """plain text 대본을 장면으로 분할하여 [대본] 탭에 씁니다.
+
+    대본 길이에 따라 자동으로 2~5개 장면으로 구성합니다.
+    """
+    scenes = _split_text_to_scenes(script_text)
+    script = {"title": title, "scenes": scenes}
+    write_script_to_sheet(spreadsheet, script)
+    log.info("  대본 시트 반영: %d장면", len(scenes))
+
+
 def write_script_to_sheet(
     spreadsheet: gspread.Spreadsheet, script: dict
 ) -> None:

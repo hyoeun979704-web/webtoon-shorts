@@ -20,20 +20,10 @@ from utils import log, send_and_wait, navigate_to_project
 
 
 def _parse_keyword_items(text: str) -> list[dict]:
-    """Claude 키워드 프로젝트 응답에서 항목을 파싱합니다.
-
-    양식:
-        [카테고리-N] 제목
-        키워드: k1, k2, k3
-        CTA 유형: 유형명
-
-    Returns:
-        [{"number": "모바일-1", "title": "...", "keywords": [...], "cta": "..."}, ...]
-    """
+    """Claude 키워드 프로젝트 응답에서 항목을 파싱합니다."""
     items = []
+    seen_titles = set()
 
-    # [카테고리-N] 제목 패턴 (숫자 포함 대괄호)
-    # 예: [모바일-1], [인터넷-2], [렌탈가전-1], [세트1]
     header_pattern = r"\[([^\]]*\d+[^\]]*)\]\s*(.+)"
 
     # 방법 1: 대괄호 패턴으로 블록 분리
@@ -51,16 +41,18 @@ def _parse_keyword_items(text: str) -> list[dict]:
         number = header_match.group(1).strip()
         title = header_match.group(2).strip()
 
-        # 메타데이터 라인 제외 (글자 수, 채점 등)
         if "글자 수" in number or "채점" in number:
             continue
 
-        # 키워드 추출
+        # 중복 제거
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
+
         kw_match = re.search(r"키워드\s*[:：]\s*(.+)", block)
         keywords_str = kw_match.group(1).strip() if kw_match else ""
         keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
 
-        # CTA 유형 추출
         cta_match = re.search(r"CTA\s*유형\s*[:：]\s*(.+)", block)
         cta = cta_match.group(1).strip() if cta_match else ""
 
@@ -87,6 +79,9 @@ def _parse_keyword_items(text: str) -> list[dict]:
                 if "글자 수" in number or "채점" in number:
                     continue
                 title = header_match.group(2).strip()
+                if title in seen_titles:
+                    continue
+                seen_titles.add(title)
                 current_item = {
                     "number": number,
                     "title": title,
@@ -132,11 +127,7 @@ def generate_keywords(
     count: int = 5,
     project_url: str = "",
 ) -> list[dict]:
-    """Claude 키워드 프로젝트에서 키워드 항목을 생성합니다.
-
-    Returns:
-        파싱된 키워드 항목 리스트
-    """
+    """Claude 키워드 프로젝트에서 키워드 항목을 생성합니다."""
     if not project_url:
         raise ValueError(
             "Claude 키워드 프로젝트 URL이 설정되지 않았습니다. "
@@ -151,7 +142,6 @@ def generate_keywords(
 
     response = send_and_wait(page, prompt)
 
-    # 디버깅용 응답 저장
     debug_path = _save_response_debug(response, category)
     log.info("응답 저장됨: %s (%d자)", debug_path, len(response))
 
@@ -165,29 +155,24 @@ def generate_keywords(
         )
 
     log.info("키워드 %d개 파싱 완료", len(items))
-    for i, item in enumerate(items, 1):
-        log.info("  %d. [%s] %s", i, item["number"], item["title"])
-        log.info("     키워드: %s", ", ".join(item["keywords"]))
-        log.info("     CTA: %s", item["cta"])
-
     return items
 
 
 def select_keyword(items: list[dict]) -> dict:
-    """사용자가 키워드 항목 중 1개를 선택합니다.
-
-    Returns:
-        선택된 키워드 항목
-    """
+    """사용자가 키워드 항목 중 1개를 선택합니다."""
     print()
     print("=" * 60)
     print("  키워드 항목 목록 (1개를 선택하세요)")
-    print("=" * 60)
+    print("-" * 60)
     for i, item in enumerate(items, 1):
-        print(f"  {i}. [{item['number']}] {item['title']}")
-        print(f"     키워드: {', '.join(item['keywords'])}")
+        # 카테고리에서 번호 부분 추출 (예: "모바일-1" → "모바일")
+        cat = re.sub(r"[-\d]+$", "", item["number"]).strip()
+        kw_str = ", ".join(item["keywords"][:3])  # 최대 3개만 표시
+        if len(item["keywords"]) > 3:
+            kw_str += " ..."
+        print(f"  {i}. [{cat}] {item['title']}")
+        print(f"     키워드: {kw_str}")
         print(f"     CTA: {item['cta']}")
-        print()
     print("=" * 60)
 
     while True:
