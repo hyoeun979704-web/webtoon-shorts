@@ -359,15 +359,17 @@ def _download_audio(page: Page, output_path: str) -> str:
 
 
 def _ensure_editor_ready(page: Page, actor_name: str, editor_url: str = "") -> None:
-    """Typecast 에디터 진입 (로그인 확인 → 새 프로젝트 생성 → 성우 선택).
+    """Typecast 에디터 진입 (로그인 확인 → 에디터 이동 → 성우 선택).
 
-    이미 에디터에 있으면 성우 선택만 수행합니다.
+    시트 [설정]의 'Typecast 에디터 URL'에 프로젝트 에디터 URL을 설정하면
+    대시보드/새 프로젝트 단계를 건너뛰고 바로 에디터로 진입합니다.
+    예: https://typecast.ai/text-to-speech/editor/xxxxxxxx
     """
     if not editor_url:
         editor_url = f"{config.TYPECAST_URL}/text-to-speech"
 
-    # 1. 대시보드 또는 에디터가 아니면 이동
-    if not _is_on_dashboard(page) and not _is_on_project_editor(page):
+    # 1. 에디터에 있지 않으면 이동
+    if not _is_on_project_editor(page):
         _safe_goto(page, editor_url, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
 
@@ -375,10 +377,15 @@ def _ensure_editor_ready(page: Page, actor_name: str, editor_url: str = "") -> N
     if not _check_typecast_logged_in(page):
         _wait_for_login(page, editor_url)
 
-    # 3. 대시보드에 있으면 새 프로젝트 생성
-    if _is_on_dashboard(page):
-        _dismiss_restore_banner(page)
-        _create_new_project(page)
+    # 3. 로그인 후에도 에디터가 아니면 다시 이동
+    if not _is_on_project_editor(page):
+        # 대시보드면 새 프로젝트 생성
+        if _is_on_dashboard(page):
+            _dismiss_restore_banner(page)
+            _create_new_project(page)
+        else:
+            _safe_goto(page, editor_url, wait_until="domcontentloaded")
+            page.wait_for_timeout(3000)
 
     # 4. 에디터에서 성우 선택
     _select_actor(page, actor_name)
