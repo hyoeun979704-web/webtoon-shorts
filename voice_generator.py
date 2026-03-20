@@ -105,9 +105,28 @@ def _wait_for_editor_load(page: Page) -> None:
 # ──────────────────────────────────────────────
 
 def _is_on_editor(page: Page) -> bool:
-    """에디터 페이지에 있는지 확인 (/editor/ 가 URL에 포함)."""
+    """에디터 페이지에 있는지 확인.
+
+    URL 패턴: /editor/ 또는 /editor가 포함된 경우
+    또는 "스크립트를 입력해 주세요" placeholder가 보이는 경우
+    """
     url = page.url.lower()
-    return "typecast" in url and "/editor/" in url
+    if "typecast" in url and "/editor" in url:
+        return True
+    # URL로 판별 불가 시 UI 요소로 판별
+    try:
+        placeholder = page.locator('text="스크립트를 입력해 주세요."').first
+        if placeholder.is_visible(timeout=1000):
+            return True
+    except Exception:
+        pass
+    try:
+        ce = page.locator('[contenteditable="true"]').first
+        if ce.is_visible(timeout=500):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _open_first_project(page: Page) -> None:
@@ -424,37 +443,55 @@ def _download_audio(page: Page, output_path: str) -> str:
 def _ensure_editor_ready(page: Page, actor_name: str, editor_url: str = "") -> None:
     """Typecast 에디터에 진입하고 성우를 선택합니다.
 
-    1. editor_url(에디터 직접 URL)로 이동
-    2. 로그인 안 되어 있으면 60초 대기
-    3. 대시보드에 있으면 첫 번째 기존 프로젝트 열기
-    4. 에디터 로드 대기
-    5. 성우 선택
+    editor_url에 /editor가 포함되어 있으면 → 바로 에디터로 이동
+    아니면 (대시보드 URL) → 대시보드에서 프로젝트 열기
     """
-    if not editor_url:
-        editor_url = f"{config.TYPECAST_URL}/text-to-speech"
+    has_editor_url = bool(editor_url and "/editor" in editor_url.lower())
+    target_url = editor_url if editor_url else f"{config.TYPECAST_URL}/text-to-speech"
 
-    # 1. 에디터 URL로 이동
-    if not _is_on_editor(page):
-        log.info("    Typecast 에디터로 이동: %s", editor_url[:80])
-        _safe_goto(page, editor_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(3000)
+    # 1. 대상 URL로 이동
+    log.info("    Typecast 이동: %s", target_url[:80])
+    _safe_goto(page, target_url, wait_until="domcontentloaded")
+    page.wait_for_timeout(3000)
 
     # 2. 로그인 확인
     if not _check_typecast_logged_in(page):
         _wait_for_login(page)
-        # 로그인 후 다시 에디터 URL로 이동
-        _safe_goto(page, editor_url, wait_until="domcontentloaded")
+        _safe_goto(page, target_url, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
 
-    # 3. 대시보드에 있으면 (editor_url이 대시보드인 경우) 프로젝트 열기
-    if not _is_on_editor(page):
-        log.info("    대시보드 → 프로젝트 열기")
-        _open_first_project(page)
+    # 3. 에디터 URL이면 바로 에디터 로드 대기, 아니면 프로젝트 열기
+    if has_editor_url:
+        log.info("    에디터 URL로 직접 진입")
+        # 에디터 URL로 갔는데 리다이렉트되어 대시보드에 있을 수 있음
+        current = page.url.lower()
+        if "/editor" not in current:
+            log.info("    리다이렉트 감지 → 다시 에디터 URL로 이동")
+            _safe_goto(page, target_url, wait_until="domcontentloaded")
+            page.wait_for_timeout(5000)
+    else:
+        # 대시보드에서 프로젝트 열기
+        if not _is_on_editor(page):
+            log.info("    대시보드 → 프로젝트 열기")
+            _open_first_project(page)
 
-    # 4. 에디터 로드 대기
+    # 4. 복원 배너 처리 (에디터 진입 직후)
+    try:
+        dismiss = page.locator('button:has-text("무시하기")').first
+        if dismiss.is_visible(timeout=2000):
+            dismiss.click()
+            page.wait_for_timeout(500)
+            log.info("    복원 배너 무시")
+    except Exception:
+        pass
+
+    # 5. 에디터 로드 대기
     _wait_for_editor_load(page)
 
-    # 5. 성우 선택
+    # 6. 현재 URL 로그 (디버깅용)
+    log.info("    현재 URL: %s", page.url[:100])
+
+    # 7. 성우 선택
     _select_actor(page, actor_name)
 
 
