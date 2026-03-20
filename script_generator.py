@@ -152,7 +152,7 @@ def generate_script(
 
     log.info("Claude 대본 프로젝트에 요청 중 - 주제: '%s'", topic)
 
-    response = send_and_wait(page, topic)
+    response = send_and_wait(page, topic, timeout_sec=300)
 
     # 디버깅용 응답 저장
     debug_path = _save_response_debug(response, topic)

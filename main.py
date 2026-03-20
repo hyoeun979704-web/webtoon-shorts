@@ -93,10 +93,21 @@ def _build_script_prompt(keyword_item: dict) -> str:
     return "\n".join(parts)
 
 
+def _dedup_topic(text: str) -> str:
+    """topic 텍스트에서 중복된 줄을 제거합니다."""
+    lines = text.strip().split("\n")
+    seen = []
+    for line in lines:
+        line = line.strip()
+        if line and line not in seen:
+            seen.append(line)
+    return "\n".join(seen)
+
+
 def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dict):
     """하나의 작업(주제)을 처리합니다."""
     # 비고에 키워드+CTA 포함 프롬프트가 있으면 그것을 사용
-    topic = str(task.get("비고", "")).strip() or task["주제"]
+    topic = _dedup_topic(str(task.get("비고", "")).strip() or task["주제"])
     task_num = task["번호"]
     row = sheet_manager.find_task_row(spreadsheet, task_num)
 
