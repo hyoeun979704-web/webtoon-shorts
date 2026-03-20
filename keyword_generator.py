@@ -20,90 +20,89 @@ from utils import log, send_and_wait, navigate_to_project
 
 
 def _parse_keyword_items(text: str) -> list[dict]:
-    """Claude 키워드 프로젝트 응답에서 항목을 파싱합니다."""
+    """Claude 키워드 프로젝트 응답에서 항목을 파싱합니다.
+
+    지원하는 형식:
+      형식A: [모바일-1] 제목 텍스트
+      형식B: ◆ 모바일-1 (또는 🔷, 📌 등 이모지 + 카테고리-번호)
+      형식C: **모바일-1** 또는 ### 모바일-1
+    """
     items = []
-    seen_titles = set()
+    seen_numbers = set()
 
-    header_pattern = r"\[([^\]]*\d+[^\]]*)\]\s*(.+)"
+    # 카테고리-번호 패턴 (예: 인터넷-1, 모바일-2, 렌탈가전-3)
+    _NUM_ID = r"[가-힣A-Za-z]+[\s]*-[\s]*\d+"
 
-    # 방법 1: 대괄호 패턴으로 블록 분리
-    blocks = re.split(r"(?=\[[^\]]*\d+[^\]]*\]\s+)", text)
+    # 항목 헤더를 인식하는 통합 패턴들
+    _HEADER_PATTERNS = [
+        # [모바일-1] 제목
+        re.compile(rf"\[({_NUM_ID})\]\s*(.*)"),
+        # ◆ 모바일-1 제목  /  🔷 인터넷-1 제목  (이모지/특수문자 접두사)
+        re.compile(rf"[◆◇●○▶►★☆🔷🔶📌📍🏷️💡✅❇️#※]\s*({_NUM_ID})\s*(.*)"),
+        # **모바일-1** 제목  (볼드 마크다운)
+        re.compile(rf"\*\*({_NUM_ID})\*\*\s*(.*)"),
+        # ### 모바일-1 제목  (마크다운 헤딩)
+        re.compile(rf"#{1,4}\s*({_NUM_ID})\s*(.*)"),
+    ]
 
-    for block in blocks:
-        block = block.strip()
-        if not block:
+    def _match_header(line: str):
+        """라인이 항목 헤더인지 확인합니다."""
+        for pat in _HEADER_PATTERNS:
+            m = pat.search(line)
+            if m:
+                num = re.sub(r"\s+", "", m.group(1))  # 공백 제거 (인터넷 - 1 → 인터넷-1)
+                title = m.group(2).strip() if m.group(2) else ""
+                # "글자 수", "채점" 등은 제외
+                if "글자" in num or "채점" in num:
+                    return None
+                return num, title
+        return None
+
+    # 라인별로 순회하며 항목 파싱
+    lines = text.split("\n")
+    current_item = None
+
+    for line in lines:
+        line = line.strip()
+        if not line:
             continue
 
-        header_match = re.match(header_pattern, block)
-        if not header_match:
+        header = _match_header(line)
+        if header:
+            number, title = header
+            if number in seen_numbers:
+                continue
+            seen_numbers.add(number)
+            current_item = {
+                "number": number,
+                "title": title,
+                "keywords": [],
+                "cta": "",
+            }
+            items.append(current_item)
             continue
 
-        number = header_match.group(1).strip()
-        title = header_match.group(2).strip()
-
-        if "글자 수" in number or "채점" in number:
-            continue
-
-        # 중복 제거
-        if title in seen_titles:
-            continue
-        seen_titles.add(title)
-
-        kw_match = re.search(r"키워드\s*[:：]\s*(.+)", block)
-        keywords_str = kw_match.group(1).strip() if kw_match else ""
-        keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
-
-        cta_match = re.search(r"CTA\s*유형\s*[:：]\s*(.+)", block)
-        cta = cta_match.group(1).strip() if cta_match else ""
-
-        items.append({
-            "number": number,
-            "title": title,
-            "keywords": keywords,
-            "cta": cta,
-        })
-
-    # 방법 2: 블록 분리 실패 시 라인별로 탐색
-    if not items:
-        lines = text.split("\n")
-        current_item = None
-
-        for line in lines:
-            line = line.strip()
-            if not line:
+        if current_item:
+            kw_match = re.match(r"키워드\s*[:：]\s*(.+)", line)
+            if kw_match:
+                kw_str = kw_match.group(1).strip()
+                current_item["keywords"] = [
+                    k.strip() for k in kw_str.split(",") if k.strip()
+                ]
+                # 제목이 비어있으면 첫 번째 키워드를 제목으로 사용
+                if not current_item["title"] and current_item["keywords"]:
+                    current_item["title"] = current_item["keywords"][0]
                 continue
 
-            header_match = re.search(header_pattern, line)
-            if header_match:
-                number = header_match.group(1).strip()
-                if "글자 수" in number or "채점" in number:
-                    continue
-                title = header_match.group(2).strip()
-                if title in seen_titles:
-                    continue
-                seen_titles.add(title)
-                current_item = {
-                    "number": number,
-                    "title": title,
-                    "keywords": [],
-                    "cta": "",
-                }
-                items.append(current_item)
+            cta_match = re.match(r"CTA\s*유형\s*[:：]\s*(.+)", line)
+            if cta_match:
+                current_item["cta"] = cta_match.group(1).strip()
                 continue
 
-            if current_item:
-                kw_match = re.match(r"키워드\s*[:：]\s*(.+)", line)
-                if kw_match:
-                    kw_str = kw_match.group(1).strip()
-                    current_item["keywords"] = [
-                        k.strip() for k in kw_str.split(",") if k.strip()
-                    ]
-                    continue
-
-                cta_match = re.match(r"CTA\s*유형\s*[:：]\s*(.+)", line)
-                if cta_match:
-                    current_item["cta"] = cta_match.group(1).strip()
-                    continue
+    # 제목이 비어있는 항목: 키워드 조합으로 제목 생성
+    for item in items:
+        if not item["title"] and item["keywords"]:
+            item["title"] = ", ".join(item["keywords"][:3])
 
     return items
 
