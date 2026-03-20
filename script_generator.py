@@ -3,6 +3,9 @@
 지정된 Claude 대본 프로젝트에 주제(키워드)만 전송하면
 프로젝트에 설정된 지침에 따라 대본을 생성합니다.
 
+대본 생성 후 같은 대화에서 구조화 요청을 추가로 보내
+장면/컷/이미지 프롬프트/편집 가이드를 JSON으로 받아옵니다.
+
 응답 양식 예시 (v1):
     [초안 작성 → 글자 수 확인 → 채점 통과]
     대본 텍스트...
@@ -18,6 +21,7 @@
     [글자 수: 185자 (공백 포함)] [채점: hook 4/5 | ...]
 """
 
+import json
 import os
 import re
 
@@ -169,3 +173,122 @@ def generate_script(
     log.info("  대본: %s...", script_text[:80])
 
     return script_text
+
+
+# ── 구조화 프롬프트 ──
+
+_STRUCTURE_PROMPT_TEMPLATE = """\
+위 대본을 유튜브 쇼츠 영상 편집용으로 구조화해줘.
+
+조건:
+- 총 장면 수: {scene_count}개
+- 장면당 컷 수: {cuts_per_scene}개
+- 이미지 스타일: {image_style}
+- 각 컷마다 DALL-E 이미지 생성용 영문 프롬프트를 작성해줘
+- 이미지 프롬프트에는 텍스트/글자/말풍선 금지 조건 포함
+- 자막은 해당 컷의 나레이션 구간에 맞게 분할
+- 효과음과 장면전환 효과도 지정해줘
+
+아래 JSON 형식으로만 응답해줘 (설명 없이 JSON만):
+```json
+{{
+  "scenes": [
+    {{
+      "scene_number": 1,
+      "narration": "이 장면의 전체 나레이션",
+      "transition": "fade_in",
+      "cuts": [
+        {{
+          "cut_number": 1,
+          "subtitle": "이 컷에 표시할 자막",
+          "image_prompt": "vertical 9:16 portrait, cinematic webtoon style, ..., no text no letters no speech bubbles",
+          "sfx": "whoosh"
+        }}
+      ]
+    }}
+  ]
+}}
+```"""
+
+
+def _parse_structure_response(response: str) -> dict | None:
+    """구조화 응답에서 JSON을 추출합니다."""
+    # ```json ... ``` 블록 추출
+    match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # bare JSON 추출
+    start = response.find('{"scenes"')
+    if start == -1:
+        start = response.find('"scenes"')
+        if start != -1:
+            # { 를 앞에서 찾기
+            brace = response.rfind("{", 0, start)
+            if brace != -1:
+                start = brace
+    if start != -1:
+        depth = 0
+        for i in range(start, len(response)):
+            if response[i] == "{":
+                depth += 1
+            elif response[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(response[start:i + 1])
+                    except json.JSONDecodeError:
+                        break
+    return None
+
+
+def structure_script(
+    page: Page,
+    script_text: str,
+    settings: dict,
+) -> dict:
+    """대본 텍스트를 장면/컷/이미지 프롬프트/편집 가이드로 구조화합니다.
+
+    기존 Claude 대화(대본 생성 직후)에서 이어서 구조화를 요청합니다.
+
+    Returns:
+        {"scenes": [{"scene_number", "narration", "transition", "cuts": [...]}]}
+    """
+    scene_count = settings.get("장면 수", "6") or "6"
+    cuts_per_scene = settings.get("장면당 컷 수", "3~4") or "3~4"
+    image_style = settings.get(
+        "이미지 스타일",
+        "webtoon style, manhwa art, digital illustration",
+    )
+
+    prompt = _STRUCTURE_PROMPT_TEMPLATE.format(
+        scene_count=scene_count,
+        cuts_per_scene=cuts_per_scene,
+        image_style=image_style,
+    )
+
+    log.info("대본 구조화 요청 중 (%s장면, 컷 %s개씩)...", scene_count, cuts_per_scene)
+    response = send_and_wait(page, prompt, timeout_sec=300)
+
+    # 디버깅용 저장
+    debug_dir = os.path.join(os.path.dirname(__file__), "temp")
+    os.makedirs(debug_dir, exist_ok=True)
+    debug_path = os.path.join(debug_dir, "last_structure_response.txt")
+    with open(debug_path, "w", encoding="utf-8") as f:
+        f.write(response)
+
+    result = _parse_structure_response(response)
+
+    if not result or "scenes" not in result:
+        raise ValueError(
+            f"대본 구조화 실패. 전체 응답은 {debug_path} 파일을 확인하세요.\n"
+            f"응답 앞부분:\n{response[:500]}"
+        )
+
+    total_cuts = sum(len(s.get("cuts", [])) for s in result["scenes"])
+    log.info("구조화 완료: %d장면, 총 %d컷", len(result["scenes"]), total_cuts)
+
+    return result

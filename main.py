@@ -18,7 +18,7 @@ import config
 import sheet_manager
 from browser_manager import BrowserManager, ensure_login
 from keyword_generator import generate_keywords, select_keyword
-from script_generator import generate_script
+from script_generator import generate_script, structure_script
 from image_generator import generate_image
 from voice_generator import generate_voice
 from utils import log
@@ -129,9 +129,9 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
     )
 
     try:
-        # ===== 1단계: 대본 생성 =====
-        log.info("[1/3] 대본 생성 중 (Claude) - '%s'", topic)
-        sheet_manager.update_task_status(spreadsheet, row, "1/3 대본 생성중")
+        # ===== 1단계: 대본 생성 + 구조화 =====
+        log.info("[1/4] 대본 생성 중 (Claude) - '%s'", topic)
+        sheet_manager.update_task_status(spreadsheet, row, "1/4 대본 생성중")
 
         claude_page = browser.new_page()
         try:
@@ -140,47 +140,55 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                 topic=topic,
                 project_url=script_project,
             )
+
+            script_path = os.path.join(project_dir, "script.txt")
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(script_text)
+
+            log.info("  대본 (%d자): %s...", len(script_text), script_text[:100])
+
+            # ===== 검토 포인트 1: 대본 검토 =====
+            if review_script:
+                sheet_manager.update_task_status(spreadsheet, row, "대본 검토 대기")
+                log.info("")
+                log.info("=" * 50)
+                log.info("  [대본 검토] 추출된 대본:")
+                log.info("")
+                log.info("  %s", script_text)
+                log.info("")
+                log.info("  수정하려면 새 대본을 입력, 그대로 진행하려면 Enter")
+                log.info("=" * 50)
+                user_input = input("  → 대본 수정 (Enter=유지): ").strip()
+                if user_input:
+                    script_text = user_input
+                    with open(script_path, "w", encoding="utf-8") as f:
+                        f.write(script_text)
+                    log.info("  대본이 수정되었습니다.")
+
+            # ===== 구조화: 같은 Claude 대화에서 장면/컷/이미지 프롬프트 생성 =====
+            log.info("[2/4] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
+            sheet_manager.update_task_status(spreadsheet, row, "2/4 구조화중")
+
+            structured = structure_script(claude_page, script_text, settings)
         finally:
             claude_page.close()
 
-        # 대본을 장면으로 분할하여 시트에 반영
-        sheet_manager.write_plain_script_to_sheet(spreadsheet, task["주제"], script_text)
+        # 구조화된 대본을 시트에 반영
+        script_data = {"title": task["주제"], "scenes": structured["scenes"]}
+        sheet_manager.write_script_to_sheet(spreadsheet, script_data)
+
+        total_cuts = sum(len(s.get("cuts", [])) for s in structured["scenes"])
+        log.info("  시트 반영 완료: %d장면, %d컷", len(structured["scenes"]), total_cuts)
 
         sheet_manager.update_task_status(
-            spreadsheet, row, "1/3 대본 생성완료",
+            spreadsheet, row, "2/4 구조화완료",
             제목=task["주제"],
+            장면수=len(structured["scenes"]),
         )
 
-        script_path = os.path.join(project_dir, "script.txt")
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(script_text)
-
-        log.info("  대본 (%d자): %s...", len(script_text), script_text[:100])
-
-        # ===== 검토 포인트 1: 대본 검토 =====
-        if review_script:
-            sheet_manager.update_task_status(spreadsheet, row, "대본 검토 대기")
-            log.info("")
-            log.info("=" * 50)
-            log.info("  [대본 검토] 추출된 대본:")
-            log.info("")
-            log.info("  %s", script_text)
-            log.info("")
-            log.info("  수정하려면 새 대본을 입력, 그대로 진행하려면 Enter")
-            log.info("=" * 50)
-            user_input = input("  → 대본 수정 (Enter=유지): ").strip()
-            if user_input:
-                script_text = user_input
-                with open(script_path, "w", encoding="utf-8") as f:
-                    f.write(script_text)
-                sheet_manager.write_plain_script_to_sheet(
-                    spreadsheet, task["주제"], script_text
-                )
-                log.info("  대본이 수정되었습니다.")
-
         # ===== 2단계: 음성 생성 =====
-        log.info("[2/3] 음성 생성 중 (Typecast)...")
-        sheet_manager.update_task_status(spreadsheet, row, "2/3 음성 생성중")
+        log.info("[3/4] 음성 생성 중 (Typecast)...")
+        sheet_manager.update_task_status(spreadsheet, row, "3/4 음성 생성중")
 
         tc_page = browser.new_page()
         try:
@@ -193,21 +201,42 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         finally:
             tc_page.close()
 
-        # ===== 3단계: 이미지 생성 =====
-        log.info("[3/3] 이미지 생성 중 (ChatGPT DALL-E)...")
-        sheet_manager.update_task_status(spreadsheet, row, "3/3 이미지 생성중")
+        # ===== 3단계: 이미지 생성 (컷별) =====
+        log.info("[4/4] 이미지 생성 중 (ChatGPT DALL-E) - %d컷...", total_cuts)
+        sheet_manager.update_task_status(spreadsheet, row, "4/4 이미지 생성중")
 
         gpt_page = browser.new_page()
         try:
             ensure_login(gpt_page, config.CHATGPT_URL, "ChatGPT")
             os.makedirs(images_dir, exist_ok=True)
 
-            image_prompt = f"유튜브 쇼츠 썸네일 이미지: {task['주제']}"
-            output_path = os.path.join(images_dir, "thumbnail.png")
+            img_idx = 0
+            for scene in structured["scenes"]:
+                for cut in scene.get("cuts", []):
+                    img_idx += 1
+                    prompt = cut.get("image_prompt", "").strip()
+                    if not prompt:
+                        log.warning("  장면%d-컷%d: 이미지 프롬프트 없음, 건너뜀",
+                                    scene["scene_number"], cut["cut_number"])
+                        continue
 
-            log.info("  썸네일 이미지 생성 중...")
-            generate_image(gpt_page, image_prompt, output_path, chatgpt_project)
-            log.info("  이미지 생성 완료")
+                    output_path = os.path.join(
+                        images_dir,
+                        f"s{scene['scene_number']:02d}_c{cut['cut_number']:02d}.png",
+                    )
+                    log.info("  [%d/%d] 장면%d-컷%d 이미지 생성 중...",
+                             img_idx, total_cuts,
+                             scene["scene_number"], cut["cut_number"])
+
+                    generate_image(gpt_page, prompt, output_path, chatgpt_project)
+
+                    # 시트에 이미지 상태 업데이트
+                    sheet_row = 1 + img_idx  # 헤더(1) + 컷 순서
+                    sheet_manager.update_script_cut_status(
+                        spreadsheet, sheet_row, image_status="완료"
+                    )
+
+            log.info("  이미지 생성 완료 (%d컷)", img_idx)
         finally:
             gpt_page.close()
 
