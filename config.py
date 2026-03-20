@@ -22,9 +22,6 @@ CLAUDE_URL = "https://claude.ai"
 # ChatGPT (chatgpt.com) 설정 - DALL-E 이미지 생성용
 CHATGPT_URL = "https://chatgpt.com"
 
-# Typecast (typecast.ai) 설정
-TYPECAST_URL = "https://typecast.ai"
-
 # CapCut (capcut.com) 설정
 CAPCUT_URL = "https://www.capcut.com"
 

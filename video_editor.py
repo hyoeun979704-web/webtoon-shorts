@@ -1,7 +1,7 @@
 """CapCut 웹(capcut.com)을 사용한 영상 편집 모듈
 
 CapCut Pro 구독의 웹 에디터를 Playwright로 자동화합니다.
-이미지, 음성, 자막, 효과음, 장면전환을 타임라인에 배치하고 최종 영상을 내보냅니다.
+이미지, 자막, 효과음, 장면전환을 타임라인에 배치하고 최종 영상을 내보냅니다.
 
 효과음/전환 이름은 CapCut에 있는 이름을 시트에 그대로 적으면 됩니다.
 """
@@ -240,7 +240,6 @@ def assemble_video(
     page: Page,
     script: dict,
     image_paths: list[str],
-    voice_paths: list[str],
     output_path: str,
     auto_export: bool = False,
 ) -> str:
@@ -249,8 +248,7 @@ def assemble_video(
     create_project(page, script["title"])
 
     log.info("  에셋 업로드 중...")
-    all_files = image_paths + voice_paths
-    upload_assets(page, all_files)
+    upload_assets(page, image_paths)
 
     # ===== 타임라인에 컷 배치 + 자막 + 전환 + 효과음 =====
     log.info("  타임라인 구성 중... (이미지 %d장)", len(image_paths))
@@ -283,12 +281,6 @@ def assemble_video(
                 add_sfx(page, sfx)
 
             media_index += 1
-
-    # 음성 트랙 추가 (장면당 1개)
-    log.info("  음성 트랙 배치 중... (%d개)", len(voice_paths))
-    for i in range(len(voice_paths)):
-        add_to_timeline(page, len(image_paths) + i)
-        page.wait_for_timeout(500)
 
     # ===== 검토 포인트 =====
     if not auto_export:

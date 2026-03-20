@@ -1,7 +1,7 @@
 """Google Sheets 연동 모듈
 
 시트 구조:
-  [설정] 탭 - 전역 설정 (성우 이름, 이미지 스타일 등)
+  [설정] 탭 - 전역 설정 (이미지 스타일, 프로젝트 URL 등)
   [작업목록] 탭 - 영상 제작 작업 큐 (주제, 상태, 결과 등)
   [대본] 탭 - 현재 작업의 대본 (수동 수정 가능)
 """
@@ -23,8 +23,6 @@ DEFAULT_SETTINGS = {
     "Claude 키워드 프로젝트 URL": "",
     "Claude 대본 프로젝트 URL": "",
     "ChatGPT 프로젝트 URL": "",
-    "성우 이름": "",
-    "Typecast 에디터 URL": "",
     "이미지 스타일": "webtoon style, manhwa art, digital illustration",
     "장면 수": "6",
     "장면당 컷 수": "3~4",
@@ -35,7 +33,6 @@ DEFAULT_SETTINGS = {
     "편집 검토": "Y",
     "Claude 계정": "",
     "ChatGPT 계정": "",
-    "Typecast 계정": "",
     "CapCut 계정": "",
 }
 

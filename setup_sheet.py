@@ -62,7 +62,7 @@ SETTING_NOTES = {
     "키워드 개수": "자동 발굴할 토픽 수 (기본: 5)",
     "Claude 프로젝트 URL": "Claude 프로젝트 URL (있으면 프로젝트 컨텍스트 활용)",
     "ChatGPT 프로젝트 URL": "ChatGPT 프로젝트 URL (있으면 프로젝트 컨텍스트 활용)",
-    "성우 이름": "필수. Typecast 성우 이름 (예: 지수, 민준, 하은)",
+    "성우 이름": "음성 생성용 성우 이름 (수동 처리 시 참고용)",
     "이미지 스타일": "DALL-E 프롬프트에 포함할 스타일 키워드",
     "장면 수": "영상 구성 장면 수 (기본: 5)",
     "장면당 컷 수": "장면당 이미지 수 범위 (기본: 3~4)",
@@ -74,7 +74,7 @@ SETTING_NOTES = {
 }
 
 # 필수 항목
-REQUIRED_SETTINGS = {"카테고리", "성우 이름"}
+REQUIRED_SETTINGS = {"카테고리"}
 
 # 드롭다운 선택지
 SETTING_DROPDOWNS = {
@@ -407,7 +407,7 @@ def setup_all(reset: bool = False) -> None:
     log.info("  시트 세팅 완료!")
     log.info("")
     log.info("  다음 단계:")
-    log.info("    1. [설정] 탭에서 '카테고리'와 '성우 이름' 입력")
+    log.info("    1. [설정] 탭에서 '카테고리' 입력")
     log.info("    2. python main.py --login  (최초 로그인)")
     log.info("    3. python main.py          (자동 실행)")
     log.info("=" * 50)

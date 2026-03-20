@@ -1,6 +1,6 @@
 """브라우저 세션 관리 모듈
 
-각 서비스(Claude, ChatGPT, Typecast, CapCut)의 로그인 세션을
+각 서비스(Claude, ChatGPT, CapCut)의 로그인 세션을
 persistent context로 유지합니다. 최초 1회만 수동 로그인하면
 이후에는 자동으로 세션이 유지됩니다.
 """

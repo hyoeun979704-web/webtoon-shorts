@@ -1,13 +1,13 @@
 """웹툰 숏폼 자동 생성 파이프라인 (Google Sheets + 브라우저 자동화)
 
 Google Sheets를 컨트롤 패널로 사용합니다:
-  [설정] 탭 - 카테고리, 프로젝트 URL, 성우, 스타일 등
+  [설정] 탭 - 카테고리, 프로젝트 URL, 스타일 등
   [작업목록] 탭 - 작업 큐 (상태: 대기/대본완료)
   [대본] 탭 - 생성된 대본 확인/수정
 
 작업 상태별 동작:
   '대기'     → 1단계(대본 생성)부터 전체 파이프라인 실행
-  '대본완료' → 시트 [대본] 탭의 대본을 사용, 3단계(음성)부터 실행
+  '대본완료' → 시트 [대본] 탭의 대본을 사용, 이미지 생성부터 실행
 
 사용법:
     python main.py           → 실행 (키워드 발굴 → 영상 생성)
@@ -24,7 +24,6 @@ from browser_manager import BrowserManager, ensure_login
 from keyword_generator import generate_keywords, select_keyword
 from script_generator import generate_script, structure_script
 from image_generator import init_image_session, generate_image_in_session
-from voice_generator import generate_voices_per_scene
 from video_editor import assemble_video
 from utils import log
 
@@ -34,7 +33,6 @@ def login_all(browser: BrowserManager, settings: dict = None):
     services = [
         (config.CLAUDE_URL, "Claude", "Claude 계정"),
         (config.CHATGPT_URL, "ChatGPT", "ChatGPT 계정"),
-        (config.TYPECAST_URL, "Typecast", "Typecast 계정"),
         (config.CAPCUT_URL, "CapCut", "CapCut 계정"),
     ]
     page = browser.new_page()
@@ -52,15 +50,8 @@ def login_all(browser: BrowserManager, settings: dict = None):
 
 def _validate_settings(settings: dict) -> None:
     """필수 설정값이 있는지 검증합니다."""
-    missing = []
     if not settings.get("카테고리", "").strip():
-        missing.append("카테고리")
-    if not settings.get("성우 이름", "").strip():
-        missing.append("성우 이름")
-    if missing:
-        raise ValueError(
-            f"시트 [설정] 탭에 다음 항목을 입력해주세요: {', '.join(missing)}"
-        )
+        raise ValueError("시트 [설정] 탭에 '카테고리'를 입력해주세요.")
 
 
 def _discover_and_select_keyword(browser: BrowserManager, settings: dict) -> dict:
@@ -114,7 +105,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
     작업 상태에 따라 시작 단계가 달라집니다:
       '대기'     → 1단계(대본 생성)부터 시작
-      '대본완료' → 시트 [대본] 탭의 대본을 사용, 3단계(음성)부터 시작
+      '대본완료' → 시트 [대본] 탭의 대본을 사용, 이미지 생성부터 시작
     """
     # 비고에 키워드+CTA 포함 프롬프트가 있으면 그것을 사용
     topic = _dedup_topic(str(task.get("비고", "")).strip() or task["주제"])
@@ -125,15 +116,12 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     project_dir = os.path.join(config.OUTPUT_DIR, f"project_{timestamp}")
     images_dir = os.path.join(project_dir, "images")
-    voices_dir = os.path.join(project_dir, "voices")
     os.makedirs(project_dir, exist_ok=True)
 
     # 설정 읽기
-    actor_name = settings.get("성우 이름", "").strip()
     review_script = settings.get("대본 검토", "Y").strip().upper() == "Y"
     script_project = settings.get("Claude 대본 프로젝트 URL", "").strip()
     chatgpt_project = settings.get("ChatGPT 프로젝트 URL", "").strip()
-    typecast_editor_url = settings.get("Typecast 에디터 URL", "").strip()
 
     sheet_manager.update_task_status(
         spreadsheet, row, "진행중",
@@ -164,15 +152,15 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             log.info("  시트 대본 로드: %d장면, %d컷", len(structured["scenes"]), total_cuts)
 
             sheet_manager.update_task_status(
-                spreadsheet, row, "2/5 구조화완료",
+                spreadsheet, row, "2/4 구조화완료",
                 제목=task["주제"],
                 장면수=len(structured["scenes"]),
             )
 
         else:
             # ===== 1단계: 대본 생성 + 구조화 =====
-            log.info("[1/5] 대본 생성 중 (Claude) - '%s'", topic)
-            sheet_manager.update_task_status(spreadsheet, row, "1/5 대본 생성중")
+            log.info("[1/4] 대본 생성 중 (Claude) - '%s'", topic)
+            sheet_manager.update_task_status(spreadsheet, row, "1/4 대본 생성중")
 
             claude_page = browser.new_page()
             try:
@@ -207,8 +195,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                         log.info("  대본이 수정되었습니다.")
 
                 # ===== 구조화: 같은 Claude 대화에서 장면/컷/이미지 프롬프트 생성 =====
-                log.info("[2/5] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
-                sheet_manager.update_task_status(spreadsheet, row, "2/5 구조화중")
+                log.info("[2/4] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
+                sheet_manager.update_task_status(spreadsheet, row, "2/4 구조화중")
 
                 structured = structure_script(claude_page, script_text, settings)
             finally:
@@ -222,19 +210,14 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             log.info("  시트 반영 완료: %d장면, %d컷", len(structured["scenes"]), total_cuts)
 
             sheet_manager.update_task_status(
-                spreadsheet, row, "2/5 구조화완료",
+                spreadsheet, row, "2/4 구조화완료",
                 제목=task["주제"],
                 장면수=len(structured["scenes"]),
             )
 
-        # ===== 3단계: 음성 생성 (건너뜀 - 수동 처리) =====
-        log.info("[3/5] 음성 생성 건너뜀 (수동 처리)")
-        sheet_manager.update_task_status(spreadsheet, row, "3/5 음성 생성 건너뜀")
-        voice_paths = []
-
-        # ===== 4단계: 이미지 생성 (컷별, 같은 대화 유지) =====
-        log.info("[4/5] 이미지 생성 중 (ChatGPT DALL-E) - %d컷...", total_cuts)
-        sheet_manager.update_task_status(spreadsheet, row, "4/5 이미지 생성중")
+        # ===== 3단계: 이미지 생성 (컷별, 같은 대화 유지) =====
+        log.info("[3/4] 이미지 생성 중 (ChatGPT DALL-E) - %d컷...", total_cuts)
+        sheet_manager.update_task_status(spreadsheet, row, "3/4 이미지 생성중")
 
         gpt_page = browser.new_page()
         image_paths = []
@@ -273,12 +256,12 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         finally:
             gpt_page.close()
 
-        # ===== 5단계: CapCut 영상 편집 =====
+        # ===== 4단계: CapCut 영상 편집 =====
         if edit_mode == "skip":
-            log.info("[5/5] 편집 건너뜀 (편집 모드: skip)")
+            log.info("[4/4] 편집 건너뜀 (편집 모드: skip)")
         else:
-            log.info("[5/5] 영상 편집 중 (CapCut)...")
-            sheet_manager.update_task_status(spreadsheet, row, "5/5 편집중")
+            log.info("[4/4] 영상 편집 중 (CapCut)...")
+            sheet_manager.update_task_status(spreadsheet, row, "4/4 편집중")
 
             video_path = os.path.join(project_dir, "final.mp4")
             capcut_page = browser.new_page()
@@ -287,7 +270,6 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                     capcut_page,
                     script=script_data,
                     image_paths=image_paths,
-                    voice_paths=voice_paths,
                     output_path=video_path,
                     auto_export=not review_edit,
                 )
@@ -326,7 +308,6 @@ def main():
 
     settings = sheet_manager.read_settings(spreadsheet)
     log.info("  카테고리: %s", settings.get("카테고리", "(미지정)") or "(미지정)")
-    log.info("  성우: %s", settings.get("성우 이름", "(미지정)") or "(미지정)")
 
     with BrowserManager() as browser:
 

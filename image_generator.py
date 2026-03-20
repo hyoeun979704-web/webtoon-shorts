@@ -126,14 +126,3 @@ def generate_image_in_session(
     _download_image(page, img_src, output_path)
 
     return output_path
-
-
-def generate_image(
-    page: Page,
-    prompt: str,
-    output_path: str,
-    project_url: str = "",
-) -> str:
-    """ChatGPT 프로젝트에서 DALL-E로 이미지를 생성합니다 (단건용)."""
-    init_image_session(page, project_url)
-    return generate_image_in_session(page, prompt, output_path)
