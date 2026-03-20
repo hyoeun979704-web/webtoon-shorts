@@ -16,10 +16,55 @@ def _is_on_editor(page: Page) -> bool:
     return "/editor" in page.url and "typecast" in page.url.lower()
 
 
+def _check_typecast_logged_in(page: Page) -> bool:
+    """Typecast에 로그인되어 있는지 확인합니다.
+
+    에디터 페이지 접근 가능 여부 또는 로그인/랜딩 페이지 리다이렉트로 판단합니다.
+    """
+    url = page.url.lower()
+    # 로그인/회원가입 페이지로 리다이렉트된 경우
+    if any(kw in url for kw in ("login", "signin", "sign-in", "auth", "signup")):
+        return False
+    # 에디터 페이지에 있으면 로그인 상태
+    if "/editor" in url:
+        return True
+    # 메인/랜딩 페이지에서 로그인 버튼이 보이면 미로그인
+    login_btn = page.locator(
+        'a:has-text("로그인"), a:has-text("Login"), a:has-text("Sign in"), '
+        'button:has-text("로그인"), button:has-text("Login"), button:has-text("Sign in")'
+    ).first
+    try:
+        if login_btn.is_visible(timeout=3000):
+            return False
+    except Exception:
+        pass
+    return True
+
+
 def _ensure_editor(page: Page, actor_name: str) -> None:
-    """Typecast 에디터 진입 + 성우 선택 (최초 1회)."""
+    """Typecast 에디터 진입 + 로그인 확인 + 성우 선택."""
     if not _is_on_editor(page):
-        ensure_login(page, config.TYPECAST_URL, "Typecast")
+        _safe_goto(page, config.TYPECAST_URL, wait_until="domcontentloaded")
+        page.wait_for_timeout(3000)
+
+        if not _check_typecast_logged_in(page):
+            log.info("")
+            log.info("=" * 50)
+            log.info("  Typecast 로그인이 필요합니다!")
+            log.info("  브라우저 창에서 직접 로그인해주세요.")
+            log.info("  60초 대기 후 자동으로 진행합니다.")
+            log.info("=" * 50)
+
+            # 60초 동안 1초마다 로그인 상태 확인
+            for elapsed in range(60):
+                page.wait_for_timeout(1000)
+                if _check_typecast_logged_in(page):
+                    log.info("  Typecast 로그인 확인! (%d초 경과)", elapsed + 1)
+                    break
+            else:
+                # 60초 후에도 미로그인이면 경고하고 계속 진행
+                log.warning("  60초 대기 완료. 로그인 상태를 확인할 수 없지만 계속 진행합니다.")
+
         _safe_goto(page, f"{config.TYPECAST_URL}/editor", wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
 
