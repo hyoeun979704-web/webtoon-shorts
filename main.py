@@ -83,10 +83,12 @@ def _discover_and_select_keyword(browser: BrowserManager, settings: dict) -> dic
 
 def _build_script_prompt(keyword_item: dict) -> str:
     """선택된 키워드 항목으로 대본 프롬프트를 구성합니다."""
-    parts = [keyword_item["title"]]
-    if keyword_item.get("keywords"):
+    title = keyword_item["title"]
+    parts = [title]
+    # 타이틀에 이미 키워드/CTA가 포함되어 있으면 중복 추가하지 않음
+    if keyword_item.get("keywords") and "키워드:" not in title:
         parts.append(f"키워드: {', '.join(keyword_item['keywords'])}")
-    if keyword_item.get("cta"):
+    if keyword_item.get("cta") and "CTA" not in title:
         parts.append(f"CTA 유형: {keyword_item['cta']}")
     return "\n".join(parts)
 
