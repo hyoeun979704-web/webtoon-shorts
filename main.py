@@ -19,8 +19,9 @@ import sheet_manager
 from browser_manager import BrowserManager, ensure_login
 from keyword_generator import generate_keywords, select_keyword
 from script_generator import generate_script, structure_script
-from image_generator import generate_image
-from voice_generator import generate_voice
+from image_generator import init_image_session, generate_image_in_session
+from voice_generator import generate_voices_per_scene
+from video_editor import assemble_video
 from utils import log
 
 
@@ -128,10 +129,13 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         시작시간=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
 
+    edit_mode = settings.get("편집 모드", "capcut").strip().lower()
+    review_edit = settings.get("편집 검토", "Y").strip().upper() == "Y"
+
     try:
         # ===== 1단계: 대본 생성 + 구조화 =====
-        log.info("[1/4] 대본 생성 중 (Claude) - '%s'", topic)
-        sheet_manager.update_task_status(spreadsheet, row, "1/4 대본 생성중")
+        log.info("[1/5] 대본 생성 중 (Claude) - '%s'", topic)
+        sheet_manager.update_task_status(spreadsheet, row, "1/5 대본 생성중")
 
         claude_page = browser.new_page()
         try:
@@ -166,8 +170,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                     log.info("  대본이 수정되었습니다.")
 
             # ===== 구조화: 같은 Claude 대화에서 장면/컷/이미지 프롬프트 생성 =====
-            log.info("[2/4] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
-            sheet_manager.update_task_status(spreadsheet, row, "2/4 구조화중")
+            log.info("[2/5] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
+            sheet_manager.update_task_status(spreadsheet, row, "2/5 구조화중")
 
             structured = structure_script(claude_page, script_text, settings)
         finally:
@@ -181,33 +185,35 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         log.info("  시트 반영 완료: %d장면, %d컷", len(structured["scenes"]), total_cuts)
 
         sheet_manager.update_task_status(
-            spreadsheet, row, "2/4 구조화완료",
+            spreadsheet, row, "2/5 구조화완료",
             제목=task["주제"],
             장면수=len(structured["scenes"]),
         )
 
-        # ===== 2단계: 음성 생성 =====
-        log.info("[3/4] 음성 생성 중 (Typecast)...")
-        sheet_manager.update_task_status(spreadsheet, row, "3/4 음성 생성중")
+        # ===== 3단계: 음성 생성 (장면별) =====
+        log.info("[3/5] 음성 생성 중 (Typecast) - %d장면...", len(structured["scenes"]))
+        sheet_manager.update_task_status(spreadsheet, row, "3/5 음성 생성중")
 
         tc_page = browser.new_page()
         try:
-            os.makedirs(voices_dir, exist_ok=True)
-            voice_path = os.path.join(voices_dir, "voice_01.wav")
-
-            log.info("  나레이션 음성 생성 중...")
-            generate_voice(tc_page, script_text, voice_path, actor_name)
-            log.info("  음성 생성 완료")
+            voice_paths = generate_voices_per_scene(
+                tc_page,
+                structured["scenes"],
+                voices_dir,
+                actor_name,
+            )
+            log.info("  음성 생성 완료 (%d개 파일)", len(voice_paths))
         finally:
             tc_page.close()
 
-        # ===== 3단계: 이미지 생성 (컷별) =====
-        log.info("[4/4] 이미지 생성 중 (ChatGPT DALL-E) - %d컷...", total_cuts)
-        sheet_manager.update_task_status(spreadsheet, row, "4/4 이미지 생성중")
+        # ===== 4단계: 이미지 생성 (컷별, 같은 대화 유지) =====
+        log.info("[4/5] 이미지 생성 중 (ChatGPT DALL-E) - %d컷...", total_cuts)
+        sheet_manager.update_task_status(spreadsheet, row, "4/5 이미지 생성중")
 
         gpt_page = browser.new_page()
+        image_paths = []
         try:
-            ensure_login(gpt_page, config.CHATGPT_URL, "ChatGPT")
+            init_image_session(gpt_page, chatgpt_project)
             os.makedirs(images_dir, exist_ok=True)
 
             img_idx = 0
@@ -228,7 +234,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                              img_idx, total_cuts,
                              scene["scene_number"], cut["cut_number"])
 
-                    generate_image(gpt_page, prompt, output_path, chatgpt_project)
+                    generate_image_in_session(gpt_page, prompt, output_path)
+                    image_paths.append(output_path)
 
                     # 시트에 이미지 상태 업데이트
                     sheet_row = 1 + img_idx  # 헤더(1) + 컷 순서
@@ -236,9 +243,31 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                         spreadsheet, sheet_row, image_status="완료"
                     )
 
-            log.info("  이미지 생성 완료 (%d컷)", img_idx)
+            log.info("  이미지 생성 완료 (%d컷)", len(image_paths))
         finally:
             gpt_page.close()
+
+        # ===== 5단계: CapCut 영상 편집 =====
+        if edit_mode == "skip":
+            log.info("[5/5] 편집 건너뜀 (편집 모드: skip)")
+        else:
+            log.info("[5/5] 영상 편집 중 (CapCut)...")
+            sheet_manager.update_task_status(spreadsheet, row, "5/5 편집중")
+
+            video_path = os.path.join(project_dir, "final.mp4")
+            capcut_page = browser.new_page()
+            try:
+                assemble_video(
+                    capcut_page,
+                    script=script_data,
+                    image_paths=image_paths,
+                    voice_paths=voice_paths,
+                    output_path=video_path,
+                    auto_export=not review_edit,
+                )
+                log.info("  영상 내보내기 완료: %s", video_path)
+            finally:
+                capcut_page.close()
 
         # ===== 완료 =====
         sheet_manager.update_task_status(

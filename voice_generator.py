@@ -1,6 +1,7 @@
 """Typecast 웹(typecast.ai)을 사용한 음성 생성 모듈
 
 Typecast Pro 구독의 웹 인터페이스를 Playwright로 자동화합니다.
+장면별로 개별 음성 파일을 생성하여 컷 타이밍 동기화를 지원합니다.
 """
 
 import os
@@ -15,12 +16,8 @@ def _is_on_editor(page: Page) -> bool:
     return "/editor" in page.url and "typecast" in page.url.lower()
 
 
-def generate_voice(page: Page, text: str, output_path: str, actor_name: str = "") -> str:
-    """Typecast 웹에서 음성을 생성하고 다운로드합니다."""
-    if not actor_name:
-        raise ValueError("성우 이름이 지정되지 않았습니다. 시트 [설정] 탭의 '성우 이름'을 입력하세요.")
-
-    # 이미 에디터에 있으면 로그인/네비게이션 건너뜀
+def _ensure_editor(page: Page, actor_name: str) -> None:
+    """Typecast 에디터 진입 + 성우 선택 (최초 1회)."""
     if not _is_on_editor(page):
         ensure_login(page, config.TYPECAST_URL, "Typecast")
         _safe_goto(page, f"{config.TYPECAST_URL}/editor", wait_until="domcontentloaded")
@@ -41,6 +38,9 @@ def generate_voice(page: Page, text: str, output_path: str, actor_name: str = ""
         else:
             log.warning("성우 '%s'를 검색 결과에서 찾을 수 없습니다. 기본 성우로 진행합니다.", actor_name)
 
+
+def _synthesize_and_download(page: Page, text: str, output_path: str) -> str:
+    """현재 에디터에서 텍스트를 합성하고 다운로드합니다."""
     # 텍스트 입력
     text_input = page.locator(
         'textarea, [contenteditable="true"], [role="textbox"]'
@@ -86,3 +86,53 @@ def generate_voice(page: Page, text: str, output_path: str, actor_name: str = ""
         raise RuntimeError(f"음성 파일 다운로드 실패: {output_path}")
 
     return output_path
+
+
+def generate_voice(page: Page, text: str, output_path: str, actor_name: str = "") -> str:
+    """Typecast 웹에서 음성을 생성하고 다운로드합니다 (단건)."""
+    if not actor_name:
+        raise ValueError("성우 이름이 지정되지 않았습니다. 시트 [설정] 탭의 '성우 이름'을 입력하세요.")
+
+    _ensure_editor(page, actor_name)
+    return _synthesize_and_download(page, text, output_path)
+
+
+def generate_voices_per_scene(
+    page: Page,
+    scenes: list[dict],
+    voices_dir: str,
+    actor_name: str = "",
+) -> list[str]:
+    """장면별로 개별 음성 파일을 생성합니다.
+
+    Args:
+        scenes: 구조화된 장면 목록 (scene_number, narration 포함)
+        voices_dir: 음성 파일 저장 디렉토리
+        actor_name: Typecast 성우 이름
+
+    Returns:
+        생성된 음성 파일 경로 목록 (장면 순서대로)
+    """
+    if not actor_name:
+        raise ValueError("성우 이름이 지정되지 않았습니다. 시트 [설정] 탭의 '성우 이름'을 입력하세요.")
+
+    os.makedirs(voices_dir, exist_ok=True)
+    _ensure_editor(page, actor_name)
+
+    voice_paths = []
+    for scene in scenes:
+        scene_num = scene["scene_number"]
+        narration = scene.get("narration", "").strip()
+        if not narration:
+            log.warning("  장면%d: 나레이션 없음, 건너뜀", scene_num)
+            continue
+
+        output_path = os.path.join(voices_dir, f"voice_s{scene_num:02d}.wav")
+        log.info("  장면%d 음성 생성 중 (%d자)...", scene_num, len(narration))
+
+        _synthesize_and_download(page, narration, output_path)
+        voice_paths.append(output_path)
+
+        log.info("    장면%d 음성 완료: %s", scene_num, os.path.basename(output_path))
+
+    return voice_paths

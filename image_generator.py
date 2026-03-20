@@ -3,6 +3,8 @@
 지정된 ChatGPT 프로젝트 또는 커스텀 GPT 내에서
 DALL-E로 고퀄리티 웹툰 이미지를 생성합니다.
 프로젝트에 설정된 지침이 이미지 스타일에 적용됩니다.
+
+같은 대화에서 연속 생성하면 스타일 일관성이 유지됩니다.
 """
 
 import os
@@ -25,13 +27,25 @@ _IMAGE_SELECTORS = [
 ]
 
 
-def _wait_for_image(page: Page, timeout_sec: int = 180) -> str:
-    """ChatGPT에서 이미지가 생성될 때까지 대기하고 src URL을 반환합니다."""
+def _count_existing_images(page: Page) -> int:
+    """현재 페이지에 이미 존재하는 이미지 수를 셉니다."""
+    for sel in _IMAGE_SELECTORS:
+        imgs = page.locator(sel).all()
+        if imgs:
+            return len(imgs)
+    return 0
+
+
+def _wait_for_image(page: Page, timeout_sec: int = 180, prev_count: int = 0) -> str:
+    """ChatGPT에서 새 이미지가 생성될 때까지 대기하고 src URL을 반환합니다.
+
+    prev_count: 이전까지 존재하던 이미지 수. 이보다 많아지면 새 이미지로 판단.
+    """
     for elapsed in range(timeout_sec):
         page.wait_for_timeout(1000)
         for sel in _IMAGE_SELECTORS:
             imgs = page.locator(sel).all()
-            if imgs and imgs[-1].is_visible():
+            if imgs and len(imgs) > prev_count:
                 page.wait_for_timeout(3000)  # 이미지 렌더링 안정화
                 src = imgs[-1].get_attribute("src")
                 if src:
@@ -62,15 +76,8 @@ def _download_image(page: Page, img_src: str, output_path: str) -> None:
         raise RuntimeError("이미지 요소를 찾을 수 없어 스크린샷을 저장할 수 없습니다")
 
 
-def generate_image(
-    page: Page,
-    prompt: str,
-    output_path: str,
-    project_url: str = "",
-) -> str:
-    """ChatGPT 프로젝트에서 DALL-E로 이미지를 생성합니다."""
-    navigate_to_project(page, config.CHATGPT_URL, project_url)
-
+def _send_image_prompt(page: Page, prompt: str) -> None:
+    """ChatGPT 입력창에 이미지 프롬프트를 전송합니다."""
     full_prompt = (
         f"Generate a single image with the following description. "
         f"Make it cinematic, high detail, professional quality:\n\n"
@@ -79,7 +86,7 @@ def generate_image(
         f"Vertical portrait orientation (9:16 aspect ratio)."
     )
 
-    editor = page.locator("#prompt-textarea").first
+    editor = page.locator("#prompt-textarea, [contenteditable='true']").first
     editor.wait_for(timeout=10000)
     editor.click()
     editor.fill(full_prompt)
@@ -91,8 +98,42 @@ def generate_image(
     else:
         editor.press("Enter")
 
-    log.info("  이미지 생성 대기 중...")
-    img_src = _wait_for_image(page)
+
+def init_image_session(page: Page, project_url: str = "") -> None:
+    """ChatGPT 이미지 생성 세션을 시작합니다 (프로젝트 이동 + 로그인).
+
+    이후 generate_image_in_session()으로 같은 대화에서 연속 생성합니다.
+    """
+    ensure_login(page, config.CHATGPT_URL, "ChatGPT")
+    navigate_to_project(page, config.CHATGPT_URL, project_url)
+
+
+def generate_image_in_session(
+    page: Page,
+    prompt: str,
+    output_path: str,
+) -> str:
+    """이미 열린 ChatGPT 대화에서 이미지를 생성합니다.
+
+    같은 대화를 유지하므로 스타일 일관성이 보장됩니다.
+    """
+    prev_count = _count_existing_images(page)
+
+    _send_image_prompt(page, prompt)
+
+    log.info("    이미지 생성 대기 중...")
+    img_src = _wait_for_image(page, prev_count=prev_count)
     _download_image(page, img_src, output_path)
 
     return output_path
+
+
+def generate_image(
+    page: Page,
+    prompt: str,
+    output_path: str,
+    project_url: str = "",
+) -> str:
+    """ChatGPT 프로젝트에서 DALL-E로 이미지를 생성합니다 (단건용)."""
+    init_image_session(page, project_url)
+    return generate_image_in_session(page, prompt, output_path)
