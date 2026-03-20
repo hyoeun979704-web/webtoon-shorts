@@ -7,13 +7,13 @@ Typecast Pro 구독의 웹 인터페이스를 Playwright로 자동화합니다.
 import os
 from playwright.sync_api import Page
 import config
-from browser_manager import ensure_login
 from utils import log, _safe_goto
 
 
 def _is_on_editor(page: Page) -> bool:
     """이미 Typecast 에디터 페이지에 있는지 확인합니다."""
-    return "/editor" in page.url and "typecast" in page.url.lower()
+    url = page.url.lower()
+    return "typecast" in url and ("/text-to-speech" in url or "/editor" in url)
 
 
 def _check_typecast_logged_in(page: Page) -> bool:
@@ -26,7 +26,7 @@ def _check_typecast_logged_in(page: Page) -> bool:
     if any(kw in url for kw in ("login", "signin", "sign-in", "auth", "signup")):
         return False
     # 에디터 페이지에 있으면 로그인 상태
-    if "/editor" in url:
+    if "/text-to-speech" in url or "/editor" in url:
         return True
     # 메인/랜딩 페이지에서 로그인 버튼이 보이면 미로그인
     login_btn = page.locator(
@@ -41,10 +41,18 @@ def _check_typecast_logged_in(page: Page) -> bool:
     return True
 
 
-def _ensure_editor(page: Page, actor_name: str) -> None:
-    """Typecast 에디터 진입 + 로그인 확인 + 성우 선택."""
+def _ensure_editor(page: Page, actor_name: str, editor_url: str = "") -> None:
+    """Typecast 에디터 진입 + 로그인 확인 + 성우 선택.
+
+    Args:
+        editor_url: 시트 [설정]의 'Typecast 에디터 URL' (예: https://typecast.ai/text-to-speech)
+    """
+    # 에디터 URL 결정: 시트 설정 > 기본값
+    if not editor_url:
+        editor_url = f"{config.TYPECAST_URL}/text-to-speech"
+
     if not _is_on_editor(page):
-        _safe_goto(page, config.TYPECAST_URL, wait_until="domcontentloaded")
+        _safe_goto(page, editor_url, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
 
         if not _check_typecast_logged_in(page):
@@ -62,11 +70,12 @@ def _ensure_editor(page: Page, actor_name: str) -> None:
                     log.info("  Typecast 로그인 확인! (%d초 경과)", elapsed + 1)
                     break
             else:
-                # 60초 후에도 미로그인이면 경고하고 계속 진행
                 log.warning("  60초 대기 완료. 로그인 상태를 확인할 수 없지만 계속 진행합니다.")
 
-        _safe_goto(page, f"{config.TYPECAST_URL}/editor", wait_until="domcontentloaded")
-        page.wait_for_timeout(3000)
+            # 로그인 후 에디터 페이지로 다시 이동
+            if not _is_on_editor(page):
+                _safe_goto(page, editor_url, wait_until="domcontentloaded")
+                page.wait_for_timeout(3000)
 
     # 성우 선택
     actor_search = page.locator(
@@ -133,12 +142,15 @@ def _synthesize_and_download(page: Page, text: str, output_path: str) -> str:
     return output_path
 
 
-def generate_voice(page: Page, text: str, output_path: str, actor_name: str = "") -> str:
+def generate_voice(
+    page: Page, text: str, output_path: str,
+    actor_name: str = "", editor_url: str = "",
+) -> str:
     """Typecast 웹에서 음성을 생성하고 다운로드합니다 (단건)."""
     if not actor_name:
         raise ValueError("성우 이름이 지정되지 않았습니다. 시트 [설정] 탭의 '성우 이름'을 입력하세요.")
 
-    _ensure_editor(page, actor_name)
+    _ensure_editor(page, actor_name, editor_url)
     return _synthesize_and_download(page, text, output_path)
 
 
@@ -147,6 +159,7 @@ def generate_voices_per_scene(
     scenes: list[dict],
     voices_dir: str,
     actor_name: str = "",
+    editor_url: str = "",
 ) -> list[str]:
     """장면별로 개별 음성 파일을 생성합니다.
 
@@ -154,6 +167,7 @@ def generate_voices_per_scene(
         scenes: 구조화된 장면 목록 (scene_number, narration 포함)
         voices_dir: 음성 파일 저장 디렉토리
         actor_name: Typecast 성우 이름
+        editor_url: 시트 [설정]의 'Typecast 에디터 URL'
 
     Returns:
         생성된 음성 파일 경로 목록 (장면 순서대로)
@@ -162,7 +176,7 @@ def generate_voices_per_scene(
         raise ValueError("성우 이름이 지정되지 않았습니다. 시트 [설정] 탭의 '성우 이름'을 입력하세요.")
 
     os.makedirs(voices_dir, exist_ok=True)
-    _ensure_editor(page, actor_name)
+    _ensure_editor(page, actor_name, editor_url)
 
     voice_paths = []
     for scene in scenes:

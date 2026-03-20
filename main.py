@@ -133,6 +133,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
     review_script = settings.get("대본 검토", "Y").strip().upper() == "Y"
     script_project = settings.get("Claude 대본 프로젝트 URL", "").strip()
     chatgpt_project = settings.get("ChatGPT 프로젝트 URL", "").strip()
+    typecast_editor_url = settings.get("Typecast 에디터 URL", "").strip()
 
     sheet_manager.update_task_status(
         spreadsheet, row, "진행중",
@@ -237,6 +238,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                 structured["scenes"],
                 voices_dir,
                 actor_name,
+                editor_url=typecast_editor_url,
             )
             log.info("  음성 생성 완료 (%d개 파일)", len(voice_paths))
         finally:

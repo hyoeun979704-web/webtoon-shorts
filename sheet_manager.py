@@ -24,6 +24,7 @@ DEFAULT_SETTINGS = {
     "Claude 대본 프로젝트 URL": "",
     "ChatGPT 프로젝트 URL": "",
     "성우 이름": "",
+    "Typecast 에디터 URL": "https://typecast.ai/text-to-speech",
     "이미지 스타일": "webtoon style, manhwa art, digital illustration",
     "장면 수": "6",
     "장면당 컷 수": "3~4",
