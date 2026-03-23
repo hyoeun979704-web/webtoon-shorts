@@ -184,7 +184,9 @@ _STRUCTURE_PROMPT_TEMPLATE = """\
 - 총 장면 수: {scene_count}개
 - 장면당 컷 수: {cuts_per_scene}개
 - 이미지 스타일: {image_style}
+- 주인공 캐릭터: 반드시 20대 예쁘고 귀여운 한국 여성 (부드러운 이목구비, 큰 눈, 젊고 사랑스러운 외모). 남성 캐릭터로 절대 대체하지 말 것.
 - 각 컷마다 DALL-E 이미지 생성용 영문 프롬프트를 작성해줘
+- 이미지 프롬프트에 주인공 외모 설명을 반드시 포함해줘 (pretty cute Korean woman in her 20s, soft features, large expressive eyes)
 - 이미지 프롬프트에는 텍스트/글자/말풍선 금지 조건 포함
 - 자막은 해당 컷의 나레이션 구간에 맞게 분할
 - 효과음과 장면전환 효과도 지정해줘
