@@ -55,9 +55,9 @@ def _extract_script_text(response: str) -> str:
     if match:
         return match.group(1).strip()
 
-    # 방법 2: "최종 출력" 이후 ~ "[글자 수:" 이전 (양식 v2)
+    # 방법 2: "최종 출력/대본" 이후 ~ "[글자 수:" 이전 (양식 v2)
     match = re.search(
-        r"최종\s*출력.*?\n\s*\n(.+?)\s*\[글자\s*수:",
+        r"최종\s*(?:출력|대본).*?\n\s*\n(.+?)\s*\[글자\s*수:",
         response,
         re.DOTALL,
     )
@@ -73,11 +73,13 @@ def _extract_script_text(response: str) -> str:
     if match:
         return match.group(1).strip()
 
-    # 방법 4: "[글자 수:" 이전의 마지막 문단 추출
+    # 방법 4: "[글자 수:" 이전의 대본 문단들을 모두 수집
     if meta_marker in response:
         before_meta = response[:response.index(meta_marker)].strip()
         paragraphs = re.split(r"\n\s*\n", before_meta)
-        for para in reversed(paragraphs):
+        # 메타/로그/헤더가 아닌 실질 대본 문단만 수집
+        script_paras = []
+        for para in paragraphs:
             para = para.strip()
             if not para:
                 continue
@@ -87,8 +89,13 @@ def _extract_script_text(response: str) -> str:
                 continue
             if re.match(r"^[\s•\-]*Step\s", para):
                 continue
+            # 섹션 헤더 (예: "최종 대본", "최종 출력") 스킵
+            if re.match(r"^(최종|수정|완성)\s*(대본|출력|스크립트)$", para):
+                continue
             if len(para) > 30:
-                return para
+                script_paras.append(para)
+        if script_paras:
+            return "\n".join(script_paras)
 
     # 방법 5: 모든 메타/로그/채점 라인 제거
     lines = response.split("\n")
