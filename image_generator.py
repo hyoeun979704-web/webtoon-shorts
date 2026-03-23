@@ -171,7 +171,9 @@ def _save_debug(filename: str, content: str) -> None:
 # ──────────────────────────────────────────────
 
 def _find_all_images_js(page: Page) -> list[dict]:
-    """JavaScript로 어시스턴트 메시지 내 모든 실질적 이미지를 찾습니다.
+    """페이지 내 모든 실질적 이미지를 찾습니다.
+
+    어시스턴트 메시지, agent-turn, 그리고 전체 페이지에서 큰 이미지를 탐색합니다.
 
     Returns:
         [{"src": "...", "width": ..., "height": ..., "msgIndex": ...}, ...]
@@ -181,12 +183,9 @@ def _find_all_images_js(page: Page) -> list[dict]:
             () => {
                 const results = [];
                 const seen = new Set();
-                // 어시스턴트 메시지 + agent-turn (DALL-E 이미지 응답) 탐색
-                const msgs = document.querySelectorAll(
-                    '[data-message-author-role="assistant"], article.agent-turn'
-                );
-                msgs.forEach((msg, msgIdx) => {
-                    msg.querySelectorAll('img').forEach(img => {
+
+                function collectImages(container, msgIdx) {
+                    container.querySelectorAll('img').forEach(img => {
                         const rect = img.getBoundingClientRect();
                         const src = img.src || img.getAttribute('src') || '';
                         // 아이콘/아바타 제외 (80px 이상만), 중복 제거
@@ -200,7 +199,21 @@ def _find_all_images_js(page: Page) -> list[dict]:
                             });
                         }
                     });
-                });
+                }
+
+                // 1차: 어시스턴트 메시지 + agent-turn 컨테이너 탐색
+                const msgs = document.querySelectorAll(
+                    '[data-message-author-role="assistant"], article.agent-turn, ' +
+                    'article[data-testid*="conversation-turn"], ' +
+                    'div[class*="agent-turn"], div[class*="image"]'
+                );
+                msgs.forEach((msg, msgIdx) => collectImages(msg, msgIdx));
+
+                // 2차: 컨테이너 탐색으로 찾지 못하면 전체 페이지에서 큰 이미지 탐색
+                if (results.length === 0) {
+                    collectImages(document.body, 0);
+                }
+
                 return results;
             }
         """)
@@ -242,6 +255,28 @@ def _wait_for_new_image(
         if retry > 0 and retry % 15 == 0:
             log.info("    이미지 렌더링 대기 중... (%d초)", retry)
 
+    # 디버그: 페이지 내 모든 img 태그 정보 출력
+    try:
+        all_imgs = page.evaluate("""
+            () => {
+                return Array.from(document.querySelectorAll('img')).map(img => {
+                    const rect = img.getBoundingClientRect();
+                    return {
+                        src: (img.src || '').substring(0, 80),
+                        w: Math.round(rect.width),
+                        h: Math.round(rect.height),
+                        parent: img.parentElement ? img.parentElement.tagName + '.' +
+                                (img.parentElement.className || '').substring(0, 50) : 'none'
+                    };
+                }).filter(i => i.w > 20 || i.h > 20);
+            }
+        """)
+        log.debug("페이지 내 img 태그 (%d개):", len(all_imgs))
+        for info in all_imgs:
+            log.debug("  %dx%d parent=%s src=%s", info["w"], info["h"], info["parent"], info["src"])
+    except Exception:
+        pass
+
     raise TimeoutError(
         f"ChatGPT 이미지를 찾을 수 없습니다. "
         f"이전 이미지 수: {prev_count}, 현재: {len(_find_all_images_js(page))}"
@@ -250,19 +285,28 @@ def _wait_for_new_image(
 
 def _get_last_assistant_image(page: Page):
     """마지막 어시스턴트 메시지에서 마지막 큰 이미지 요소를 반환합니다."""
-    try:
-        last_msg = page.locator('[data-message-author-role="assistant"]').last
-        imgs = last_msg.locator("img").all()
-        # 큰 이미지만 필터링
-        for img in reversed(imgs):
-            try:
-                bbox = img.bounding_box()
-                if bbox and bbox["width"] > 80 and bbox["height"] > 80:
-                    return img
-            except Exception:
+    # 여러 컨테이너 셀렉터 순서대로 시도
+    container_selectors = [
+        'article.agent-turn',
+        '[data-message-author-role="assistant"]',
+        'article[data-testid*="conversation-turn"]',
+        'div[class*="agent-turn"]',
+    ]
+    for sel in container_selectors:
+        try:
+            container = page.locator(sel).last
+            if container.count() == 0:
                 continue
-    except Exception:
-        pass
+            imgs = container.locator("img").all()
+            for img in reversed(imgs):
+                try:
+                    bbox = img.bounding_box()
+                    if bbox and bbox["width"] > 80 and bbox["height"] > 80:
+                        return img
+                except Exception:
+                    continue
+        except Exception:
+            continue
 
     # 폴백: 페이지 전체에서 마지막 큰 이미지
     imgs = page.locator("img").all()
