@@ -10,6 +10,7 @@
 
 import os
 import re
+import shutil
 
 import requests
 from playwright.sync_api import Page
@@ -274,11 +275,99 @@ def _get_last_assistant_image(page: Page):
     return None
 
 
+def _click_download_button(page: Page, img_element, output_path: str) -> bool:
+    """ChatGPT 이미지의 다운로드 버튼을 클릭하여 원본 이미지를 저장합니다.
+
+    이미지에 호버하면 나타나는 다운로드 버튼을 클릭하고,
+    Playwright의 download 이벤트를 캡처하여 지정 경로에 저장합니다.
+
+    Returns:
+        성공 여부
+    """
+    if not img_element:
+        return False
+
+    try:
+        # 이미지 위에 호버하여 오버레이 버튼 표시
+        img_element.hover()
+        page.wait_for_timeout(1000)
+
+        # 다운로드 버튼 찾기 (여러 셀렉터 시도)
+        download_btn_selectors = [
+            'a[download]',                          # <a download> 속성
+            'button[aria-label="Download"]',
+            'button[aria-label="download"]',
+            'button[aria-label="다운로드"]',
+            'button[data-testid="download-button"]',
+        ]
+
+        # 이미지의 부모 컨테이너에서 다운로드 버튼 탐색
+        container = img_element.locator("xpath=ancestor::div[contains(@class, 'group') or contains(@class, 'relative')]").first
+        download_btn = None
+
+        # 컨테이너 내에서 먼저 탐색
+        if container.count() > 0:
+            for sel in download_btn_selectors:
+                btn = container.locator(sel).first
+                if btn.count() > 0 and btn.is_visible():
+                    download_btn = btn
+                    break
+
+            # SVG 다운로드 아이콘 버튼 탐색 (화살표 아래 아이콘)
+            if not download_btn:
+                buttons = container.locator("button").all()
+                for btn in buttons:
+                    try:
+                        if not btn.is_visible():
+                            continue
+                        # 다운로드 아이콘 SVG 패턴: 아래쪽 화살표
+                        svg = btn.locator("svg").first
+                        if svg.count() > 0:
+                            inner = btn.inner_html()
+                            if "download" in inner.lower() or "arrow" in inner.lower():
+                                download_btn = btn
+                                break
+                    except Exception:
+                        continue
+
+        # 컨테이너에서 못 찾으면 마지막 어시스턴트 메시지에서 탐색
+        if not download_btn:
+            last_msg = page.locator('[data-message-author-role="assistant"]').last
+            for sel in download_btn_selectors:
+                btn = last_msg.locator(sel).first
+                if btn.count() > 0 and btn.is_visible():
+                    download_btn = btn
+                    break
+
+        if not download_btn:
+            log.debug("    다운로드 버튼을 찾을 수 없습니다")
+            return False
+
+        # Playwright download 이벤트 캡처 후 버튼 클릭
+        with page.expect_download(timeout=30000) as download_info:
+            download_btn.click()
+
+        download = download_info.value
+        download.save_as(output_path)
+        size = os.path.getsize(output_path)
+        log.info("    다운로드 버튼으로 저장 완료: %s (%d KB)",
+                 os.path.basename(output_path), size // 1024)
+        return True
+
+    except Exception as e:
+        log.debug("    다운로드 버튼 방식 실패: %s", e)
+        return False
+
+
 def _download_image(page: Page, img_src: str, img_element, output_path: str) -> None:
-    """이미지를 다운로드합니다. URL 실패 시 스크린샷으로 대체합니다."""
+    """이미지를 다운로드합니다. 다운로드 버튼 → URL → 스크린샷 순으로 시도합니다."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    # 방법 1: HTTP URL 직접 다운로드
+    # 방법 1: ChatGPT 다운로드 버튼 클릭 (원본 품질)
+    if _click_download_button(page, img_element, output_path):
+        return
+
+    # 방법 2: HTTP URL 직접 다운로드
     if img_src and img_src.startswith("http"):
         try:
             resp = requests.get(img_src, timeout=60)
@@ -286,14 +375,14 @@ def _download_image(page: Page, img_src: str, img_element, output_path: str) -> 
             if len(resp.content) > 1000:
                 with open(output_path, "wb") as f:
                     f.write(resp.content)
-                log.info("    저장 완료: %s (%d KB)",
+                log.info("    URL 다운로드 저장: %s (%d KB)",
                          os.path.basename(output_path), len(resp.content) // 1024)
                 return
             log.warning("    다운로드 이미지가 너무 작습니다 (%d bytes)", len(resp.content))
         except Exception as e:
             log.warning("    URL 다운로드 실패: %s", e)
 
-    # 방법 2: 이미지 요소 스크린샷
+    # 방법 3: 이미지 요소 스크린샷
     if img_element:
         try:
             if img_element.is_visible():
@@ -304,7 +393,7 @@ def _download_image(page: Page, img_src: str, img_element, output_path: str) -> 
         except Exception as e:
             log.warning("    이미지 스크린샷 실패: %s", e)
 
-    # 방법 3: 마지막 어시스턴트 메시지 전체 스크린샷
+    # 방법 4: 마지막 어시스턴트 메시지 전체 스크린샷
     try:
         last_msg = page.locator('[data-message-author-role="assistant"]').last
         if last_msg.is_visible():
