@@ -58,9 +58,10 @@ def optimize_prompts(
 
     prompt = (
         f"다음 숏폼 대본의 각 컷에 대해 이미지 프롬프트를 작성해주세요.\n\n"
-        f"★ 필수 캐릭터 규칙: 주인공은 반드시 20대 예쁘고 귀여운 한국 여성이어야 합니다. "
-        f"부드러운 이목구비, 큰 눈, 젊고 사랑스러운 외모. 절대 남성으로 그리지 마세요.\n"
-        f"모든 프롬프트에 'pretty cute Korean woman in her 20s, soft features, large expressive eyes'를 포함해주세요.\n\n"
+        f"★ 필수 캐릭터 규칙: 주인공은 반드시 20대 청순하고 섹시한 한국 여성이어야 합니다. "
+        f"부드럽고 섬세한 이목구비, 큰 눈, 글로시한 입술, 슬림한 몸매, 젊고 빛나는 외모. 절대 남성으로 그리지 마세요.\n"
+        f"의상은 세련되고 은근히 섹시한 스타일로. "
+        f"모든 프롬프트에 'beautiful Korean woman in her 20s, innocent yet alluring, delicate features, large expressive eyes, glossy lips, slim figure, stylish subtly revealing outfit'를 포함해주세요.\n\n"
         f"{chr(10).join(script_lines)}\n\n"
         f"장면 수: {len(cut_labels)}개\n\n"
         f"각 컷마다 아래 형식으로 출력해주세요:\n"
@@ -225,18 +226,26 @@ def _find_all_images_js(page: Page) -> list[dict]:
 def _wait_for_new_image(
     page: Page,
     prev_count: int,
-    timeout_sec: int = 300,
+    timeout_sec: int = 0,
 ) -> tuple:
     """ChatGPT 응답 완료 후 새 이미지를 찾아 반환합니다.
+
+    GPT 이미지 생성은 대기열이 길어질 수 있으므로 기본적으로 무제한 대기합니다.
+    2분마다 이미지 존재 여부를 확인합니다.
+
+    Args:
+        timeout_sec: 0이면 무제한 대기 (기본값)
 
     Returns:
         (img_src, img_element) 튜플
     """
-    # 1단계: 응답 완료 대기
-    wait_for_response_complete(page, timeout_sec=timeout_sec)
+    # 1단계: 응답 완료 대기 (무제한)
+    wait_for_response_complete(page, timeout_sec=timeout_sec or 600)
 
-    # 2단계: 이미지 탐색 (최대 90초 추가 대기)
-    for retry in range(90):
+    # 2단계: 이미지 탐색 (무제한, 2분 간격 체크)
+    check_interval = 120  # 2분마다 체크
+    elapsed = 0
+    while True:
         images = _find_all_images_js(page)
         if len(images) > prev_count:
             page.wait_for_timeout(2000)  # 렌더링 안정화
@@ -251,11 +260,28 @@ def _wait_for_new_image(
             img_element = _get_last_assistant_image(page)
             return src, img_element
 
-        page.wait_for_timeout(1000)
-        if retry > 0 and retry % 15 == 0:
-            log.info("    이미지 렌더링 대기 중... (%d초)", retry)
+        # 2분 대기 (10초 단위로 나눠서 중간에도 체크)
+        for sec in range(check_interval):
+            page.wait_for_timeout(1000)
+            elapsed += 1
+            # 10초마다 중간 체크 (이미지가 빨리 나올 수도 있으므로)
+            if sec > 0 and sec % 10 == 0:
+                images = _find_all_images_js(page)
+                if len(images) > prev_count:
+                    break
 
-    # 디버그: 페이지 내 모든 img 태그 정보 출력
+        # 이미 위 루프에서 찾았으면 continue로 상단에서 처리
+        images = _find_all_images_js(page)
+        if len(images) > prev_count:
+            continue
+
+        minutes = elapsed // 60
+        log.info("    이미지 생성 대기 중... (%d분 경과)", minutes)
+
+        if timeout_sec > 0 and elapsed >= timeout_sec:
+            break
+
+    # 타임아웃 시 디버그 정보
     try:
         all_imgs = page.evaluate("""
             () => {
@@ -481,11 +507,13 @@ def _send_image_prompt(page: Page, prompt: str) -> None:
 
     프로젝트에서 최적화된 프롬프트를 그대로 사용합니다.
     """
-    # 주인공 캐릭터 일관성 강제: 20대 예쁘고 귀여운 한국 여성
+    # 주인공 캐릭터 일관성 강제: 20대 청순하고 섹시한 한국 여성
     character_directive = (
         "MANDATORY CHARACTER RULE: The main character (protagonist) MUST be "
-        "a pretty and cute Korean woman in her 20s with soft facial features, "
-        "large expressive eyes, and a youthful appearance. "
+        "a beautiful Korean woman in her 20s with an innocent yet alluring look. "
+        "She has delicate soft facial features, large expressive eyes, "
+        "glossy lips, slim figure, and a youthful radiant appearance. "
+        "Her outfit should be stylish and subtly revealing — showing elegance with a hint of sexiness. "
         "She must NEVER be depicted as male. "
     )
     full_prompt = (
