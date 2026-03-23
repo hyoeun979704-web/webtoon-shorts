@@ -180,16 +180,18 @@ def _find_all_images_js(page: Page) -> list[dict]:
         return page.evaluate("""
             () => {
                 const results = [];
-                // 어시스턴트 메시지 탐색
+                const seen = new Set();
+                // 어시스턴트 메시지 + agent-turn (DALL-E 이미지 응답) 탐색
                 const msgs = document.querySelectorAll(
-                    '[data-message-author-role="assistant"]'
+                    '[data-message-author-role="assistant"], article.agent-turn'
                 );
                 msgs.forEach((msg, msgIdx) => {
                     msg.querySelectorAll('img').forEach(img => {
                         const rect = img.getBoundingClientRect();
                         const src = img.src || img.getAttribute('src') || '';
-                        // 아이콘/아바타 제외 (80px 이상만)
-                        if (rect.width > 80 && rect.height > 80 && src) {
+                        // 아이콘/아바타 제외 (80px 이상만), 중복 제거
+                        if (rect.width > 80 && rect.height > 80 && src && !seen.has(src)) {
+                            seen.add(src);
                             results.push({
                                 src: src,
                                 width: Math.round(rect.width),
@@ -294,50 +296,74 @@ def _click_download_button(page: Page, img_element, output_path: str) -> bool:
 
         # 다운로드 버튼 찾기 (여러 셀렉터 시도)
         download_btn_selectors = [
-            'a[download]',                          # <a download> 속성
-            'button[aria-label="Download"]',
-            'button[aria-label="download"]',
-            'button[aria-label="다운로드"]',
+            'a[download]',                                  # <a download> 속성
+            'button[aria-label*="download" i]',             # Download / download
+            'button[aria-label*="save" i]',                 # Save image
+            'button[aria-label*="다운로드"]',
+            '[role="button"][aria-label*="download" i]',
             'button[data-testid="download-button"]',
         ]
 
         # 이미지의 부모 컨테이너에서 다운로드 버튼 탐색
-        container = img_element.locator("xpath=ancestor::div[contains(@class, 'group') or contains(@class, 'relative')]").first
+        # ChatGPT는 article.agent-turn 또는 div.group/relative 안에 이미지를 렌더링
+        container_selectors = [
+            "xpath=ancestor::article[contains(@class, 'agent-turn')]",
+            "xpath=ancestor::div[contains(@class, 'group') or contains(@class, 'relative')]",
+        ]
         download_btn = None
 
-        # 컨테이너 내에서 먼저 탐색
-        if container.count() > 0:
+        for cont_sel in container_selectors:
+            container = img_element.locator(cont_sel).first
+            if container.count() == 0:
+                continue
+
             for sel in download_btn_selectors:
                 btn = container.locator(sel).first
                 if btn.count() > 0 and btn.is_visible():
                     download_btn = btn
                     break
 
-            # SVG 다운로드 아이콘 버튼 탐색 (화살표 아래 아이콘)
+            # SVG 다운로드 아이콘 버튼 탐색
             if not download_btn:
-                buttons = container.locator("button").all()
-                for btn in buttons:
+                # a 태그와 button 태그 모두 탐색
+                clickables = container.locator("a, button, [role='button'], [role='menuitem']").all()
+                for btn in clickables:
                     try:
                         if not btn.is_visible():
                             continue
-                        # 다운로드 아이콘 SVG 패턴: 아래쪽 화살표
-                        svg = btn.locator("svg").first
-                        if svg.count() > 0:
-                            inner = btn.inner_html()
-                            if "download" in inner.lower() or "arrow" in inner.lower():
-                                download_btn = btn
-                                break
+                        # aria-label, title, innerText에서 download/save 키워드 확인
+                        aria = (btn.get_attribute("aria-label") or "").lower()
+                        title = (btn.get_attribute("title") or "").lower()
+                        text = btn.inner_text().lower().strip()
+                        has_download_attr = btn.get_attribute("download") is not None
+                        if has_download_attr or "download" in aria or "save" in aria or "download" in title or "download" in text:
+                            download_btn = btn
+                            break
                     except Exception:
                         continue
 
-        # 컨테이너에서 못 찾으면 마지막 어시스턴트 메시지에서 탐색
+            if download_btn:
+                break
+
+        # 컨테이너에서 못 찾으면 마지막 어시스턴트 메시지/agent-turn에서 탐색
         if not download_btn:
-            last_msg = page.locator('[data-message-author-role="assistant"]').last
-            for sel in download_btn_selectors:
-                btn = last_msg.locator(sel).first
-                if btn.count() > 0 and btn.is_visible():
-                    download_btn = btn
-                    break
+            fallback_containers = [
+                page.locator('article.agent-turn').last,
+                page.locator('[data-message-author-role="assistant"]').last,
+            ]
+            for fb in fallback_containers:
+                try:
+                    if fb.count() == 0:
+                        continue
+                    for sel in download_btn_selectors:
+                        btn = fb.locator(sel).first
+                        if btn.count() > 0 and btn.is_visible():
+                            download_btn = btn
+                            break
+                    if download_btn:
+                        break
+                except Exception:
+                    continue
 
         if not download_btn:
             log.debug("    다운로드 버튼을 찾을 수 없습니다")
