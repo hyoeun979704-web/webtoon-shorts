@@ -92,6 +92,12 @@ def _extract_script_text(response: str) -> str:
             # 섹션 헤더 (예: "최종 대본", "최종 출력") 스킵
             if re.match(r"^(최종|수정|완성)\s*(대본|출력|스크립트)$", para):
                 continue
+            # 불릿 체크리스트 (• 수치 첫 문장..., • 모호한 수치...) 스킵
+            if para.startswith("•") or para.startswith("- "):
+                continue
+            # CTA/채점/수정안내 메타 블록 스킵
+            if any(kw in para for kw in ("[CTA 유형", "채점 근거", "⚠", "clarity")):
+                continue
             if len(para) > 30:
                 script_paras.append(para)
         if script_paras:
@@ -116,8 +122,9 @@ def _extract_script_text(response: str) -> str:
         # 메타데이터 스킵
         if "[글자 수:" in stripped or "[채점:" in stripped:
             continue
-        # 채점 근거 메모 이후 전부 스킵
-        if "채점 근거" in stripped or "채점 메모" in stripped:
+        # 채점 근거/CTA/수정 안내 등 메타 정보 이후 전부 스킵
+        if any(kw in stripped for kw in ("채점 근거", "채점 메모", "⚠ 수정 안내",
+                                          "⚠️ 수정 안내", "[CTA 유형", "clarity")):
             break
         # thinking 헤더 스킵
         if stripped.endswith(">") and ("검토" in stripped or "작성" in stripped

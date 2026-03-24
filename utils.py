@@ -108,8 +108,23 @@ def wait_for_response_complete(page: Page, timeout_sec: int = 120) -> None:
             break
 
     if not stop_appeared:
-        log.warning("응답 정지 버튼을 감지하지 못했습니다. 추가 대기 후 진행합니다.")
-        page.wait_for_timeout(15000)
+        # DALL-E 이미지 생성 등에서는 stop 버튼 없이 진행될 수 있음
+        # 텍스트 응답이 나타나거나 이미지가 로드될 때까지 대기
+        log.debug("응답 정지 버튼 미감지. 응답 완료 신호를 추가 대기합니다...")
+        for _ in range(min(timeout_sec, 120)):
+            page.wait_for_timeout(1000)
+            # send 버튼이 다시 나타나면 응답 완료로 판단
+            send_ready = page.locator(
+                '[data-testid="send-button"], '
+                'button[aria-label="Send Message"], '
+                'button[aria-label="Send message"]'
+            ).first
+            try:
+                if send_ready.is_visible():
+                    break
+            except Exception:
+                pass
+        page.wait_for_timeout(2000)
         return
 
     # 정지 버튼이 사라지고 스트리밍이 끝날 때까지 대기

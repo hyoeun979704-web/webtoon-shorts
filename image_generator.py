@@ -10,7 +10,6 @@
 
 import os
 import re
-import shutil
 
 import requests
 from playwright.sync_api import Page
@@ -220,39 +219,26 @@ def _find_all_images_js(page: Page) -> list[dict]:
         return []
 
 
-def _find_large_image_playwright(page: Page) -> tuple:
-    """Playwright locator로 페이지에서 큰 이미지를 직접 찾습니다 (JS 폴백).
-
-    Returns:
-        (img_src, img_element) 또는 (None, None)
-    """
-    try:
-        imgs = page.locator("img").all()
-        for img in reversed(imgs):
-            try:
-                bbox = img.bounding_box()
-                if bbox and bbox["width"] > 100 and bbox["height"] > 100:
-                    src = img.get_attribute("src") or ""
-                    return src, img
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return None, None
+def _get_image_srcs(page: Page) -> set[str]:
+    """현재 페이지의 모든 큰 이미지 src를 set으로 반환합니다."""
+    images = _find_all_images_js(page)
+    return {img["src"] for img in images if img.get("src")}
 
 
 def _wait_for_new_image(
     page: Page,
-    prev_count: int,
+    prev_srcs: set[str],
     timeout_sec: int = 0,
 ) -> tuple:
     """ChatGPT 응답 완료 후 새 이미지를 찾아 반환합니다.
 
-    무제한 대기하며 2분마다 이미지 존재 여부를 확인합니다.
-    JS 감지 실패 시 Playwright locator로 직접 탐색하는 폴백도 수행합니다.
+    이전 이미지 src 집합과 비교하여 새 이미지를 감지합니다.
+    (카운트 비교보다 안정적 - 스크롤로 이전 이미지가 사라져도 영향 없음)
+
+    무제한 대기하며 2분마다 로그를 출력합니다.
 
     Returns:
-        (img_src, img_element) 튜플
+        (img_src, img_element) 튜플, 실패 시 (None, None)
     """
     # 1단계: 응답 완료 대기
     wait_for_response_complete(page, timeout_sec=600)
@@ -263,26 +249,42 @@ def _wait_for_new_image(
     while True:
         # JS 기반 감지
         images = _find_all_images_js(page)
-        if len(images) > prev_count:
+        current_srcs = {img["src"] for img in images if img.get("src")}
+        new_srcs = current_srcs - prev_srcs
+
+        if new_srcs:
             page.wait_for_timeout(2000)  # 렌더링 안정화
 
-            new_img_info = images[-1]
-            src = new_img_info["src"]
-            log.info("    새 이미지 감지(JS): %dx%d, src=%s...",
-                     new_img_info["width"], new_img_info["height"], src[:60])
+            # 새 이미지 중 마지막 것 선택
+            new_src = None
+            for img in reversed(images):
+                if img.get("src") in new_srcs:
+                    new_src = img["src"]
+                    log.info("    새 이미지 감지: %dx%d, src=%s...",
+                             img["width"], img["height"], new_src[:60])
+                    break
 
             img_element = _get_last_assistant_image(page)
-            return src, img_element
+            return new_src, img_element
 
-        # Playwright locator 기반 감지 (JS가 실패할 경우 폴백)
-        pw_src, pw_img = _find_large_image_playwright(page)
-        if pw_img:
-            # 이전에 없던 이미지인지 확인 (src 기반)
-            prev_srcs = {img.get("src", "") for img in images}
-            if pw_src and pw_src not in prev_srcs:
-                page.wait_for_timeout(2000)
-                log.info("    새 이미지 감지(Playwright): src=%s...", (pw_src or "")[:60])
-                return pw_src, pw_img
+        # Playwright locator 폴백: JS가 이미지를 못 찾는 경우
+        try:
+            all_imgs = page.locator("img").all()
+            for img in reversed(all_imgs):
+                try:
+                    src = img.get_attribute("src") or ""
+                    if not src or src in prev_srcs:
+                        continue
+                    # naturalWidth로 크기 확인 (viewport 무관)
+                    size = img.evaluate("el => ({w: el.naturalWidth, h: el.naturalHeight})")
+                    if size["w"] > 80 and size["h"] > 80:
+                        page.wait_for_timeout(2000)
+                        log.info("    새 이미지 감지(Playwright): src=%s...", src[:60])
+                        return src, img
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
         # 10초 대기 후 재체크
         page.wait_for_timeout(10000)
@@ -546,12 +548,12 @@ def generate_image_in_session(
     무제한 대기하며 이미지가 생성될 때까지 기다립니다.
     이미지 감지에 실패해도 스크린샷 폴백으로 반드시 저장합니다.
     """
-    prev_count = len(_find_all_images_js(page))
+    prev_srcs = _get_image_srcs(page)
 
     _send_image_prompt(page, prompt)
 
     log.info("    이미지 생성 대기 중...")
-    img_src, img_element = _wait_for_new_image(page, prev_count)
+    img_src, img_element = _wait_for_new_image(page, prev_srcs)
 
     if img_src or img_element:
         try:

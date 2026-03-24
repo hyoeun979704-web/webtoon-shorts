@@ -381,10 +381,10 @@ def main():
                 failed += 1
                 continue
 
-    if failed:
-        log.warning("완료! (성공 %d건 / 실패 %d건)", len(pending) - failed, failed)
-    else:
-        log.info("모든 작업 완료! (%d건)", len(pending))
+        if failed:
+            log.warning("완료! (성공 %d건 / 실패 %d건)", len(pending) - failed, failed)
+        else:
+            log.info("모든 작업 완료! (%d건)", len(pending))
 
 
 if __name__ == "__main__":
