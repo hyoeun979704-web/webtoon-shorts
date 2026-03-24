@@ -226,6 +226,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             os.makedirs(images_dir, exist_ok=True)
 
             img_idx = 0
+            failed_cuts = []
             for scene in structured["scenes"]:
                 for cut in scene.get("cuts", []):
                     img_idx += 1
@@ -239,20 +240,41 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                         images_dir,
                         f"s{scene['scene_number']:02d}_c{cut['cut_number']:02d}.png",
                     )
+
+                    # 이미 생성된 이미지가 있으면 건너뛰기
+                    if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+                        log.info("  [%d/%d] 장면%d-컷%d 이미 존재, 건너뜀",
+                                 img_idx, total_cuts,
+                                 scene["scene_number"], cut["cut_number"])
+                        image_paths.append(output_path)
+                        continue
+
                     log.info("  [%d/%d] 장면%d-컷%d 이미지 생성 중...",
                              img_idx, total_cuts,
                              scene["scene_number"], cut["cut_number"])
 
-                    generate_image_in_session(gpt_page, prompt, output_path)
-                    image_paths.append(output_path)
+                    try:
+                        result = generate_image_in_session(gpt_page, prompt, output_path)
+                        if result:
+                            image_paths.append(output_path)
+                            sheet_row = 1 + img_idx
+                            sheet_manager.update_script_cut_status(
+                                spreadsheet, sheet_row, image_status="완료"
+                            )
+                        else:
+                            cut_label = f"장면{scene['scene_number']}-컷{cut['cut_number']}"
+                            failed_cuts.append(cut_label)
+                            log.warning("  %s 이미지 저장 실패, 건너뜀", cut_label)
+                    except Exception as e:
+                        cut_label = f"장면{scene['scene_number']}-컷{cut['cut_number']}"
+                        failed_cuts.append(cut_label)
+                        log.error("  %s 이미지 생성 오류: %s. 건너뛰고 계속 진행", cut_label, e)
 
-                    # 시트에 이미지 상태 업데이트
-                    sheet_row = 1 + img_idx  # 헤더(1) + 컷 순서
-                    sheet_manager.update_script_cut_status(
-                        spreadsheet, sheet_row, image_status="완료"
-                    )
-
-            log.info("  이미지 생성 완료 (%d컷)", len(image_paths))
+            if failed_cuts:
+                log.warning("  이미지 생성 완료: 성공 %d컷, 실패 %d컷 (%s)",
+                            len(image_paths), len(failed_cuts), ", ".join(failed_cuts))
+            else:
+                log.info("  이미지 생성 완료 (%d컷)", len(image_paths))
         finally:
             gpt_page.close()
 

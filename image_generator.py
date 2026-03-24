@@ -174,7 +174,8 @@ def _save_debug(filename: str, content: str) -> None:
 def _find_all_images_js(page: Page) -> list[dict]:
     """페이지 내 모든 실질적 이미지를 찾습니다.
 
-    어시스턴트 메시지, agent-turn, 그리고 전체 페이지에서 큰 이미지를 탐색합니다.
+    naturalWidth/naturalHeight를 사용하여 viewport 밖 이미지도 정확히 감지합니다.
+    (getBoundingClientRect는 스크롤 밖이면 0을 반환할 수 있어 누락 발생)
 
     Returns:
         [{"src": "...", "width": ..., "height": ..., "msgIndex": ...}, ...]
@@ -187,33 +188,29 @@ def _find_all_images_js(page: Page) -> list[dict]:
 
                 function collectImages(container, msgIdx) {
                     container.querySelectorAll('img').forEach(img => {
-                        const rect = img.getBoundingClientRect();
                         const src = img.src || img.getAttribute('src') || '';
+                        // naturalWidth/Height: 원본 이미지 크기 (viewport 무관)
+                        // getBoundingClientRect: 현재 표시 크기 (보이면 사용)
+                        const nw = img.naturalWidth || 0;
+                        const nh = img.naturalHeight || 0;
+                        const rect = img.getBoundingClientRect();
+                        const w = rect.width || nw;
+                        const h = rect.height || nh;
                         // 아이콘/아바타 제외 (80px 이상만), 중복 제거
-                        if (rect.width > 80 && rect.height > 80 && src && !seen.has(src)) {
+                        if (w > 80 && h > 80 && src && !seen.has(src)) {
                             seen.add(src);
                             results.push({
                                 src: src,
-                                width: Math.round(rect.width),
-                                height: Math.round(rect.height),
+                                width: Math.round(w),
+                                height: Math.round(h),
                                 msgIndex: msgIdx,
                             });
                         }
                     });
                 }
 
-                // 1차: 어시스턴트 메시지 + agent-turn 컨테이너 탐색
-                const msgs = document.querySelectorAll(
-                    '[data-message-author-role="assistant"], article.agent-turn, ' +
-                    'article[data-testid*="conversation-turn"], ' +
-                    'div[class*="agent-turn"], div[class*="image"]'
-                );
-                msgs.forEach((msg, msgIdx) => collectImages(msg, msgIdx));
-
-                // 2차: 컨테이너 탐색으로 찾지 못하면 전체 페이지에서 큰 이미지 탐색
-                if (results.length === 0) {
-                    collectImages(document.body, 0);
-                }
+                // 전체 페이지에서 큰 이미지 탐색 (컨테이너 제한 없이)
+                collectImages(document.body, 0);
 
                 return results;
             }
@@ -223,6 +220,27 @@ def _find_all_images_js(page: Page) -> list[dict]:
         return []
 
 
+def _find_large_image_playwright(page: Page) -> tuple:
+    """Playwright locator로 페이지에서 큰 이미지를 직접 찾습니다 (JS 폴백).
+
+    Returns:
+        (img_src, img_element) 또는 (None, None)
+    """
+    try:
+        imgs = page.locator("img").all()
+        for img in reversed(imgs):
+            try:
+                bbox = img.bounding_box()
+                if bbox and bbox["width"] > 100 and bbox["height"] > 100:
+                    src = img.get_attribute("src") or ""
+                    return src, img
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None, None
+
+
 def _wait_for_new_image(
     page: Page,
     prev_count: int,
@@ -230,83 +248,53 @@ def _wait_for_new_image(
 ) -> tuple:
     """ChatGPT 응답 완료 후 새 이미지를 찾아 반환합니다.
 
-    GPT 이미지 생성은 대기열이 길어질 수 있으므로 기본적으로 무제한 대기합니다.
-    2분마다 이미지 존재 여부를 확인합니다.
-
-    Args:
-        timeout_sec: 0이면 무제한 대기 (기본값)
+    무제한 대기하며 2분마다 이미지 존재 여부를 확인합니다.
+    JS 감지 실패 시 Playwright locator로 직접 탐색하는 폴백도 수행합니다.
 
     Returns:
         (img_src, img_element) 튜플
     """
-    # 1단계: 응답 완료 대기 (무제한)
-    wait_for_response_complete(page, timeout_sec=timeout_sec or 600)
+    # 1단계: 응답 완료 대기
+    wait_for_response_complete(page, timeout_sec=600)
 
-    # 2단계: 이미지 탐색 (무제한, 2분 간격 체크)
-    check_interval = 120  # 2분마다 체크
+    # 2단계: 이미지 탐색 (무제한, 2분 간격 로그)
+    check_interval = 120  # 2분마다 로그
     elapsed = 0
     while True:
+        # JS 기반 감지
         images = _find_all_images_js(page)
         if len(images) > prev_count:
             page.wait_for_timeout(2000)  # 렌더링 안정화
 
-            # 새로운 이미지의 src 가져오기
             new_img_info = images[-1]
             src = new_img_info["src"]
-            log.info("    새 이미지 감지: %dx%d, src=%s...",
+            log.info("    새 이미지 감지(JS): %dx%d, src=%s...",
                      new_img_info["width"], new_img_info["height"], src[:60])
 
-            # 해당 이미지 요소 참조
             img_element = _get_last_assistant_image(page)
             return src, img_element
 
-        # 2분 대기 (10초 단위로 나눠서 중간에도 체크)
-        for sec in range(check_interval):
-            page.wait_for_timeout(1000)
-            elapsed += 1
-            # 10초마다 중간 체크 (이미지가 빨리 나올 수도 있으므로)
-            if sec > 0 and sec % 10 == 0:
-                images = _find_all_images_js(page)
-                if len(images) > prev_count:
-                    break
+        # Playwright locator 기반 감지 (JS가 실패할 경우 폴백)
+        pw_src, pw_img = _find_large_image_playwright(page)
+        if pw_img:
+            # 이전에 없던 이미지인지 확인 (src 기반)
+            prev_srcs = {img.get("src", "") for img in images}
+            if pw_src and pw_src not in prev_srcs:
+                page.wait_for_timeout(2000)
+                log.info("    새 이미지 감지(Playwright): src=%s...", (pw_src or "")[:60])
+                return pw_src, pw_img
 
-        # 이미 위 루프에서 찾았으면 continue로 상단에서 처리
-        images = _find_all_images_js(page)
-        if len(images) > prev_count:
-            continue
+        # 10초 대기 후 재체크
+        page.wait_for_timeout(10000)
+        elapsed += 10
 
-        minutes = elapsed // 60
-        log.info("    이미지 생성 대기 중... (%d분 경과)", minutes)
+        if elapsed > 0 and elapsed % check_interval == 0:
+            log.info("    이미지 생성 대기 중... (%d분 경과)", elapsed // 60)
 
         if timeout_sec > 0 and elapsed >= timeout_sec:
             break
 
-    # 타임아웃 시 디버그 정보
-    try:
-        all_imgs = page.evaluate("""
-            () => {
-                return Array.from(document.querySelectorAll('img')).map(img => {
-                    const rect = img.getBoundingClientRect();
-                    return {
-                        src: (img.src || '').substring(0, 80),
-                        w: Math.round(rect.width),
-                        h: Math.round(rect.height),
-                        parent: img.parentElement ? img.parentElement.tagName + '.' +
-                                (img.parentElement.className || '').substring(0, 50) : 'none'
-                    };
-                }).filter(i => i.w > 20 || i.h > 20);
-            }
-        """)
-        log.debug("페이지 내 img 태그 (%d개):", len(all_imgs))
-        for info in all_imgs:
-            log.debug("  %dx%d parent=%s src=%s", info["w"], info["h"], info["parent"], info["src"])
-    except Exception:
-        pass
-
-    raise TimeoutError(
-        f"ChatGPT 이미지를 찾을 수 없습니다. "
-        f"이전 이미지 수: {prev_count}, 현재: {len(_find_all_images_js(page))}"
-    )
+    return None, None
 
 
 def _get_last_assistant_image(page: Page):
@@ -555,7 +543,8 @@ def generate_image_in_session(
 ) -> str:
     """이미 열린 ChatGPT 대화에서 이미지를 생성합니다.
 
-    프로젝트에서 최적화된 프롬프트를 사용하므로 스타일 일관성이 보장됩니다.
+    무제한 대기하며 이미지가 생성될 때까지 기다립니다.
+    이미지 감지에 실패해도 스크린샷 폴백으로 반드시 저장합니다.
     """
     prev_count = len(_find_all_images_js(page))
 
@@ -563,6 +552,35 @@ def generate_image_in_session(
 
     log.info("    이미지 생성 대기 중...")
     img_src, img_element = _wait_for_new_image(page, prev_count)
-    _download_image(page, img_src, img_element, output_path)
 
-    return output_path
+    if img_src or img_element:
+        try:
+            _download_image(page, img_src, img_element, output_path)
+            return output_path
+        except Exception as e:
+            log.warning("    이미지 다운로드 실패, 스크린샷 폴백: %s", e)
+
+    # 폴백: 페이지에서 마지막 큰 이미지 요소를 직접 찾아서 스크린샷
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    fallback_img = _get_last_assistant_image(page)
+    if fallback_img:
+        try:
+            fallback_img.screenshot(path=output_path)
+            size = os.path.getsize(output_path)
+            log.info("    스크린샷 폴백 저장: %s (%d KB)",
+                     os.path.basename(output_path), size // 1024)
+            return output_path
+        except Exception as e:
+            log.warning("    스크린샷 폴백 실패: %s", e)
+
+    # 최종 폴백: 대화 영역 전체 스크린샷
+    try:
+        main_area = page.locator("main").first
+        if main_area.is_visible():
+            main_area.screenshot(path=output_path)
+            log.warning("    대화 영역 전체 스크린샷으로 대체 저장")
+            return output_path
+    except Exception:
+        pass
+
+    raise RuntimeError(f"이미지를 저장할 수 없습니다: {output_path}")
