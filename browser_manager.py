@@ -6,11 +6,64 @@ persistent context로 유지합니다. 최초 1회만 수동 로그인하면
 """
 
 import os
+import glob
+import time
+import subprocess
+import sys
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, BrowserContext, Page
 import config
 from utils import log, _safe_goto
+
+
+def _kill_stale_chrome(profile_dir: str) -> None:
+    """해당 프로필 디렉토리를 사용 중인 Chrome 프로세스를 종료합니다."""
+    if sys.platform == "win32":
+        # Windows: taskkill로 chrome.exe 중 해당 프로필을 사용하는 프로세스 종료
+        try:
+            # wmic으로 해당 프로필을 인자로 가진 chrome 프로세스 찾기
+            result = subprocess.run(
+                ["wmic", "process", "where",
+                 f"name='chrome.exe' and commandline like '%{os.path.basename(profile_dir)}%'",
+                 "get", "processid"],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if line.isdigit():
+                    subprocess.run(["taskkill", "/F", "/PID", line],
+                                   capture_output=True, timeout=10)
+                    log.info("  기존 Chrome 프로세스 종료: PID %s", line)
+        except Exception:
+            # wmic 실패 시 전체 chrome 종료하지 않음 (안전)
+            pass
+    else:
+        # Linux/macOS: pkill로 해당 프로필 인자를 가진 chromium 종료
+        try:
+            subprocess.run(
+                ["pkill", "-f", f"--user-data-dir={profile_dir}"],
+                capture_output=True, timeout=10
+            )
+        except Exception:
+            pass
+
+
+def _remove_lock_files(profile_dir: str) -> None:
+    """Chrome 프로필의 잠금 파일을 제거합니다."""
+    lock_patterns = [
+        os.path.join(profile_dir, "SingletonLock"),
+        os.path.join(profile_dir, "SingletonSocket"),
+        os.path.join(profile_dir, "SingletonCookie"),
+        os.path.join(profile_dir, "lockfile"),
+    ]
+    for pattern in lock_patterns:
+        for lock_file in glob.glob(pattern):
+            try:
+                os.remove(lock_file)
+                log.debug("  잠금 파일 제거: %s", lock_file)
+            except Exception:
+                pass
 
 
 class BrowserManager:
@@ -21,23 +74,45 @@ class BrowserManager:
         self._context: BrowserContext | None = None
 
     def start(self) -> BrowserContext:
-        """브라우저를 시작하고 persistent context를 반환합니다."""
+        """브라우저를 시작하고 persistent context를 반환합니다.
+
+        프로필 잠금 등으로 실패하면 잠금 해제 후 최대 2회 재시도합니다.
+        """
         profile_dir = os.path.abspath(config.BROWSER_PROFILE_DIR)
         os.makedirs(profile_dir, exist_ok=True)
 
         self._playwright = sync_playwright().start()
-        self._context = self._playwright.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=config.HEADLESS,
-            slow_mo=config.SLOW_MO,
-            viewport={"width": 1280, "height": 900},
-            locale="ko-KR",
-            timezone_id="Asia/Seoul",
-            args=[
-                "--disable-blink-features=AutomationControlled",
-            ],
-        )
-        return self._context
+
+        last_error = None
+        for attempt in range(3):
+            try:
+                self._context = self._playwright.chromium.launch_persistent_context(
+                    user_data_dir=profile_dir,
+                    headless=config.HEADLESS,
+                    slow_mo=config.SLOW_MO,
+                    viewport={"width": 1280, "height": 900},
+                    locale="ko-KR",
+                    timezone_id="Asia/Seoul",
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                )
+                return self._context
+            except Exception as e:
+                last_error = e
+                error_msg = str(e).lower()
+                if attempt < 2 and ("target closed" in error_msg or
+                                    "browser has been closed" in error_msg or
+                                    "crashed" in error_msg):
+                    log.warning("  브라우저 시작 실패 (시도 %d/3): %s", attempt + 1, e)
+                    log.info("  프로필 잠금 해제 후 재시도합니다...")
+                    _kill_stale_chrome(profile_dir)
+                    _remove_lock_files(profile_dir)
+                    time.sleep(3)
+                else:
+                    break
+
+        raise last_error
 
     def new_page(self) -> Page:
         """새 탭을 엽니다."""
