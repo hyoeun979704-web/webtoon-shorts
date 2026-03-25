@@ -226,32 +226,73 @@ def send_prompt(page: Page, prompt: str) -> None:
     # Cloudflare 보안 확인이 있으면 통과될 때까지 대기
     _wait_for_cloudflare(page)
 
-    # ChatGPT 입력창 탐색
+    # ChatGPT 입력창 탐색 (우선순위: ChatGPT 전용 → 범용)
     editor_selectors = [
-        '[contenteditable="true"]',
         '#prompt-textarea',
+        '[data-testid="composer-text-input"]',
+        'div[contenteditable="true"][role="textbox"]',
+        '[contenteditable="true"]',
         'textarea[placeholder]',
         'div[role="textbox"]',
     ]
-    editor = page.locator(", ".join(editor_selectors)).first
-    editor.wait_for(timeout=15000)
+
+    editor = None
+    for sel in editor_selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.is_visible(timeout=2000):
+                editor = loc
+                break
+        except Exception:
+            continue
+
+    if not editor:
+        # 전체 셀렉터 조합으로 최대 30초 대기
+        combined = ", ".join(editor_selectors)
+        editor = page.locator(combined).first
+        editor.wait_for(timeout=30000)
+
     editor.click()
-    editor.fill(prompt)
+    page.wait_for_timeout(300)
+
+    # fill()이 안 되는 contenteditable에 대비하여 type() 폴백
+    try:
+        editor.fill(prompt)
+    except Exception:
+        log.debug("  fill() 실패, type() 사용")
+        editor.type(prompt, delay=10)
+
     page.wait_for_timeout(500)
 
     # 전송 버튼 클릭 또는 Enter
     send_selectors = [
+        '[data-testid="send-button"]',
         'button[aria-label="Send Message"]',
         'button[aria-label="Send message"]',
         'button[aria-label="Send prompt"]',
-        '[data-testid="send-button"]',
-        'button[type="submit"]',
+        'button[data-testid="composer-send-button"]',
     ]
-    send_btn = page.locator(", ".join(send_selectors)).first
-    if send_btn.is_visible():
-        send_btn.click()
-    else:
+    sent = False
+    for sel in send_selectors:
+        try:
+            btn = page.locator(sel).first
+            if btn.is_visible(timeout=1000) and btn.is_enabled():
+                btn.click()
+                sent = True
+                break
+        except Exception:
+            continue
+
+    if not sent:
+        # Enter로 전송
         editor.press("Enter")
+        page.wait_for_timeout(300)
+        # Shift+Enter가 필요한 경우를 위해 Ctrl+Enter도 시도
+        try:
+            if not page.locator('[data-is-streaming="true"]').first.is_visible(timeout=1000):
+                editor.press("Control+Enter")
+        except Exception:
+            pass
 
 
 def send_and_wait(page: Page, prompt: str, timeout_sec: int = 120) -> str:
@@ -299,8 +340,8 @@ def _safe_goto(page: Page, url: str, **kwargs):
 def navigate_to_project(page: Page, base_url: str, project_url: str = "") -> None:
     """ChatGPT 프로젝트 또는 새 대화 페이지로 이동합니다.
 
-    프로젝트 페이지에는 이미 입력창이 있으므로
-    별도 버튼 클릭 없이 바로 프롬프트를 입력할 수 있습니다.
+    GPT 프로젝트 페이지(/g/g-p-...)는 랜딩 화면이 먼저 뜨므로
+    "대화 시작" 버튼을 클릭하여 채팅 화면으로 전환합니다.
     """
     if project_url:
         _safe_goto(page, project_url, wait_until="domcontentloaded")
@@ -315,6 +356,72 @@ def navigate_to_project(page: Page, base_url: str, project_url: str = "") -> Non
             log.info("  프로젝트 페이지 접속 완료: %s", current[:80])
         else:
             log.warning("  프로젝트 페이지가 아닙니다. 현재 URL: %s", current[:80])
+
+        # GPT 랜딩 페이지: "대화 시작" / "Start chat" 버튼 클릭
+        _click_gpt_start_button(page)
+
     else:
         _safe_goto(page, f"{base_url}/new", wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
+
+
+def _click_gpt_start_button(page: Page) -> None:
+    """GPT 프로젝트 랜딩 페이지의 시작 버튼을 클릭합니다.
+
+    ChatGPT의 커스텀 GPT(/g/...) 페이지는 처음 접속 시
+    GPT 소개 + 시작 버튼이 표시됩니다. 이를 클릭해야 입력창이 나타납니다.
+    """
+    # 입력창이 이미 보이면 바로 리턴
+    editor_selectors = [
+        '#prompt-textarea',
+        '[contenteditable="true"]',
+        'div[role="textbox"]',
+        'textarea[placeholder]',
+    ]
+    for sel in editor_selectors:
+        try:
+            if page.locator(sel).first.is_visible(timeout=1000):
+                return
+        except Exception:
+            pass
+
+    # GPT 랜딩 페이지의 시작 버튼 찾기
+    start_button_selectors = [
+        # "Start chat" / "대화 시작" 텍스트 버튼
+        'button:has-text("Start chat")',
+        'button:has-text("대화 시작")',
+        'button:has-text("Message")',
+        'button:has-text("시작")',
+        # ChatGPT GPT 페이지의 일반적인 시작 버튼
+        '[data-testid="gpt-start-button"]',
+        # 하단 입력 영역의 플레이스홀더 클릭
+        '[data-testid="composer-text-input"]',
+        'div[class*="composer"] [contenteditable]',
+    ]
+
+    for sel in start_button_selectors:
+        try:
+            btn = page.locator(sel).first
+            if btn.is_visible(timeout=1000):
+                btn.click()
+                log.info("  GPT 시작 버튼 클릭: %s", sel[:50])
+                page.wait_for_timeout(2000)
+                return
+        except Exception:
+            continue
+
+    # 시작 버튼을 못 찾으면 페이지에서 아무 곳이나 클릭 시도
+    # (일부 GPT 페이지는 전체 영역 클릭으로 채팅 시작)
+    log.info("  GPT 시작 버튼을 찾지 못했습니다. 페이지 로딩 대기 중...")
+    page.wait_for_timeout(3000)
+
+    # 한 번 더 입력창 확인
+    for sel in editor_selectors:
+        try:
+            if page.locator(sel).first.is_visible(timeout=2000):
+                return
+        except Exception:
+            pass
+
+    log.warning("  입력창을 찾지 못했습니다. 직접 확인 후 Enter를 눌러주세요.")
+    input("  → 채팅 화면이 보이면 Enter: ")
