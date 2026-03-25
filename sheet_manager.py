@@ -20,9 +20,6 @@ TAB_SCRIPT = "대본"
 DEFAULT_SETTINGS = {
     "카테고리": "",
     "키워드 개수": "5",
-    "ChatGPT 키워드 프로젝트 URL": "",
-    "ChatGPT 대본 프로젝트 URL": "",
-    "ChatGPT 이미지 프로젝트 URL": "",
     "이미지 스타일": "webtoon style, manhwa art, digital illustration",
     "장면 수": "6",
     "장면당 컷 수": "3~4",
@@ -31,15 +28,13 @@ DEFAULT_SETTINGS = {
     "편집 모드": "capcut",
     "대본 검토": "Y",
     "편집 검토": "Y",
-    "ChatGPT 계정": "",
 }
 
-# 기존 시트에서 레거시 키 이름이 사용된 경우 마이그레이션 매핑
-_SETTINGS_MIGRATION = {
-    "Claude 프로젝트 URL": ["ChatGPT 키워드 프로젝트 URL", "ChatGPT 대본 프로젝트 URL"],
-    "Claude 키워드 프로젝트 URL": ["ChatGPT 키워드 프로젝트 URL"],
-    "Claude 대본 프로젝트 URL": ["ChatGPT 대본 프로젝트 URL"],
-    "ChatGPT 프로젝트 URL": ["ChatGPT 이미지 프로젝트 URL"],
+# 기존 시트에서 레거시 키 이름이 사용된 경우 무시 목록
+_LEGACY_KEYS = {
+    "Claude 프로젝트 URL", "Claude 키워드 프로젝트 URL", "Claude 대본 프로젝트 URL",
+    "ChatGPT 프로젝트 URL", "ChatGPT 키워드 프로젝트 URL", "ChatGPT 대본 프로젝트 URL",
+    "ChatGPT 이미지 프로젝트 URL", "ChatGPT 계정",
 }
 
 # ── 작업목록 탭 헤더 ──
@@ -136,28 +131,9 @@ def init_sheet(spreadsheet: gspread.Spreadsheet) -> None:
         all_rows = ws.get_all_values()
         existing_keys = {row[0].strip() for row in all_rows[1:] if row and row[0].strip()}
 
-        # 마이그레이션 소스 키가 있으면 타겟 키를 추가하지 않음
-        # + 이전에 잘못 추가된 빈 타겟 행 삭제
-        migration_targets = set()
-        rows_to_delete = []
-        for src, targets in _SETTINGS_MIGRATION.items():
-            if src in existing_keys:
-                migration_targets.update(targets)
-                # 빈 값으로 추가된 타겟 행 찾기 (역순으로 삭제)
-                for row_idx, row in enumerate(all_rows[1:], start=2):
-                    key = row[0].strip() if row else ""
-                    val = row[1].strip() if len(row) >= 2 else ""
-                    if key in targets and not val:
-                        rows_to_delete.append(row_idx)
-
-        if rows_to_delete:
-            for row_idx in sorted(rows_to_delete, reverse=True):
-                ws.delete_rows(row_idx)
-            log.info("  [%s] 탭에서 빈 마이그레이션 행 %d개 삭제", TAB_SETTINGS, len(rows_to_delete))
-
         new_rows = []
         for key, val in DEFAULT_SETTINGS.items():
-            if key not in existing_keys and key not in migration_targets:
+            if key not in existing_keys:
                 new_rows.append([key, val, ""])
         if new_rows:
             ws.append_rows(new_rows)
@@ -204,46 +180,24 @@ def init_sheet(spreadsheet: gspread.Spreadsheet) -> None:
 # ──────────────────────────────────────────────
 
 def read_settings(spreadsheet: gspread.Spreadsheet) -> dict:
-    """[설정] 탭에서 key-value 쌍을 읽어 dict로 반환합니다.
-
-    레거시 키 이름(Claude 프로젝트 URL 등)도 자동으로 마이그레이션합니다.
-    """
+    """[설정] 탭에서 key-value 쌍을 읽어 dict로 반환합니다."""
     ws = spreadsheet.worksheet(TAB_SETTINGS)
     rows = ws.get_all_values()
     settings = {}
-    dup_count: dict[str, int] = {}  # 중복 키 카운터
 
     for row in rows[1:]:
         if len(row) >= 2 and row[0].strip():
             key = row[0].strip()
             val = row[1].strip()
 
-            if key in _SETTINGS_MIGRATION:
-                idx = dup_count.get(key, 0)
-                mapped_keys = _SETTINGS_MIGRATION[key]
-                if idx < len(mapped_keys):
-                    mapped = mapped_keys[idx]
-                    if val:  # 빈 값은 마이그레이션하지 않음
-                        settings[mapped] = val
-                    log.info("  설정 매핑: '%s' (#%d) → '%s' = '%s'",
-                             key, idx + 1, mapped, val[:60] if val else "(빈값)")
-                dup_count[key] = idx + 1
-            elif key in ("ChatGPT 키워드 프로젝트 URL", "ChatGPT 대본 프로젝트 URL",
-                         "ChatGPT 이미지 프로젝트 URL"):
-                # 값이 있을 때만 설정 (빈 행이 마이그레이션 값을 덮어쓰지 않도록)
-                if val:
-                    settings[key] = val
-            else:
-                settings[key] = val
+            # 레거시 키(브라우저 자동화용)는 무시
+            if key in _LEGACY_KEYS:
+                continue
 
-    # 디버그: 프로젝트 URL 확인
-    kw_url = settings.get("ChatGPT 키워드 프로젝트 URL", "")
-    sc_url = settings.get("ChatGPT 대본 프로젝트 URL", "")
-    img_url = settings.get("ChatGPT 이미지 프로젝트 URL", "")
-    log.info("  ChatGPT 키워드 프로젝트 URL: %s", kw_url[:60] if kw_url else "(없음)")
-    log.info("  ChatGPT 대본 프로젝트 URL: %s", sc_url[:60] if sc_url else "(없음)")
-    log.info("  ChatGPT 이미지 프로젝트 URL: %s", img_url[:60] if img_url else "(없음)")
+            settings[key] = val
+
     log.info("  카테고리: %s", settings.get("카테고리", "(미지정)") or "(미지정)")
+    log.info("  이미지 스타일: %s", settings.get("이미지 스타일", "(기본)") or "(기본)")
 
     return settings
 

@@ -1,7 +1,7 @@
-"""웹툰 숏폼 자동 생성 파이프라인 (Google Sheets + 브라우저 자동화)
+"""웹툰 숏폼 자동 생성 파이프라인 (OpenAI API + Google Sheets)
 
 Google Sheets를 컨트롤 패널로 사용합니다:
-  [설정] 탭 - 카테고리, 프로젝트 URL, 스타일 등
+  [설정] 탭 - 카테고리, 스타일 등
   [작업목록] 탭 - 작업 큐 (상태: 대기/대본완료)
   [대본] 탭 - 생성된 대본 확인/수정
 
@@ -11,7 +11,7 @@ Google Sheets를 컨트롤 패널로 사용합니다:
 
 사용법:
     python main.py           → 실행 (키워드 발굴 → 영상 생성)
-    python main.py --login   → 계정 로그인만 수행
+    python main.py --login   → CapCut 로그인만 수행
 """
 
 import argparse
@@ -23,55 +23,39 @@ import sheet_manager
 from browser_manager import BrowserManager, ensure_login
 from keyword_generator import generate_keywords, select_keyword
 from script_generator import generate_script, structure_script
-from image_generator import init_image_session, generate_image_in_session
+from image_generator import generate_images
 from video_editor import assemble_video
 from utils import log
 
 
 def login_all(browser: BrowserManager, settings: dict = None):
-    """모든 서비스에 미리 로그인합니다."""
-    services = [
-        (config.CHATGPT_URL, "ChatGPT", "ChatGPT 계정"),
-        (config.CAPCUT_URL, "CapCut", "CapCut 계정"),
-    ]
+    """CapCut에 로그인합니다."""
     page = browser.new_page()
-    for url, name, account_key in services:
-        account = (settings or {}).get(account_key, "").strip()
-        if account:
-            log.info("%s 로그인 확인 중... (계정: %s)", name, account)
-        else:
-            log.info("%s 로그인 확인 중...", name)
-        ensure_login(page, url, name, account_hint=account)
-        log.info("  %s 로그인 완료!", name)
+    log.info("CapCut 로그인 확인 중...")
+    ensure_login(page, config.CAPCUT_URL, "CapCut")
+    log.info("  CapCut 로그인 완료!")
     page.close()
-    log.info("모든 서비스 로그인 완료!")
+    log.info("로그인 완료!")
 
 
 def _validate_settings(settings: dict) -> None:
     """필수 설정값이 있는지 검증합니다."""
     if not settings.get("카테고리", "").strip():
         raise ValueError("시트 [설정] 탭에 '카테고리'를 입력해주세요.")
+    if not config.OPENAI_API_KEY:
+        raise ValueError(
+            "OPENAI_API_KEY가 설정되지 않았습니다. "
+            ".env 파일에 OPENAI_API_KEY를 입력해주세요."
+        )
 
 
-def _discover_and_select_keyword(browser: BrowserManager, settings: dict) -> dict:
-    """키워드 프로젝트 실행 → 응답 파싱 → 1개 선택."""
+def _discover_and_select_keyword(settings: dict) -> dict:
+    """키워드 발굴 → 응답 파싱 → 1개 선택."""
     category = settings.get("카테고리", "").strip()
-    count = int(settings.get("키워드 개수", "6") or "6")
-    keyword_project = settings.get("ChatGPT 키워드 프로젝트 URL", "").strip()
+    count = int(settings.get("키워드 개수", "5") or "5")
 
     log.info("카테고리 [%s]에서 키워드 %d개 발굴 중...", category, count)
-
-    gpt_page = browser.new_page()
-    try:
-        items = generate_keywords(
-            gpt_page,
-            category=category,
-            count=count,
-            project_url=keyword_project,
-        )
-    finally:
-        gpt_page.close()
-
+    items = generate_keywords(category=category, count=count)
     selected = select_keyword(items)
     return selected
 
@@ -119,8 +103,10 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
     # 설정 읽기
     review_script = settings.get("대본 검토", "Y").strip().upper() == "Y"
-    script_project = settings.get("ChatGPT 대본 프로젝트 URL", "").strip()
-    chatgpt_project = settings.get("ChatGPT 이미지 프로젝트 URL", "").strip()
+    image_style = settings.get(
+        "이미지 스타일",
+        "webtoon style, manhwa art, digital illustration",
+    )
 
     sheet_manager.update_task_status(
         spreadsheet, row, "진행중",
@@ -157,49 +143,41 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             )
 
         else:
-            # ===== 1단계: 대본 생성 + 구조화 =====
-            log.info("[1/4] 대본 생성 중 (ChatGPT) - '%s'", topic)
+            # ===== 1단계: 대본 생성 (OpenAI API) =====
+            log.info("[1/4] 대본 생성 중 (OpenAI API) - '%s'", topic)
             sheet_manager.update_task_status(spreadsheet, row, "1/4 대본 생성중")
 
-            gpt_page = browser.new_page()
-            try:
-                script_text = generate_script(
-                    gpt_page,
-                    topic=topic,
-                    project_url=script_project,
-                )
+            script_text = generate_script(topic=topic)
 
-                script_path = os.path.join(project_dir, "script.txt")
-                with open(script_path, "w", encoding="utf-8") as f:
-                    f.write(script_text)
+            script_path = os.path.join(project_dir, "script.txt")
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(script_text)
 
-                log.info("  대본 (%d자): %s...", len(script_text), script_text[:100])
+            log.info("  대본 (%d자): %s...", len(script_text), script_text[:100])
 
-                # ===== 검토 포인트 1: 대본 검토 =====
-                if review_script:
-                    sheet_manager.update_task_status(spreadsheet, row, "대본 검토 대기")
-                    log.info("")
-                    log.info("=" * 50)
-                    log.info("  [대본 검토] 추출된 대본:")
-                    log.info("")
-                    log.info("  %s", script_text)
-                    log.info("")
-                    log.info("  수정하려면 새 대본을 입력, 그대로 진행하려면 Enter")
-                    log.info("=" * 50)
-                    user_input = input("  → 대본 수정 (Enter=유지): ").strip()
-                    if user_input:
-                        script_text = user_input
-                        with open(script_path, "w", encoding="utf-8") as f:
-                            f.write(script_text)
-                        log.info("  대본이 수정되었습니다.")
+            # ===== 검토 포인트 1: 대본 검토 =====
+            if review_script:
+                sheet_manager.update_task_status(spreadsheet, row, "대본 검토 대기")
+                log.info("")
+                log.info("=" * 50)
+                log.info("  [대본 검토] 추출된 대본:")
+                log.info("")
+                log.info("  %s", script_text)
+                log.info("")
+                log.info("  수정하려면 새 대본을 입력, 그대로 진행하려면 Enter")
+                log.info("=" * 50)
+                user_input = input("  → 대본 수정 (Enter=유지): ").strip()
+                if user_input:
+                    script_text = user_input
+                    with open(script_path, "w", encoding="utf-8") as f:
+                        f.write(script_text)
+                    log.info("  대본이 수정되었습니다.")
 
-                # ===== 구조화: 같은 ChatGPT 대화에서 장면/컷/이미지 프롬프트 생성 =====
-                log.info("[2/4] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
-                sheet_manager.update_task_status(spreadsheet, row, "2/4 구조화중")
+            # ===== 2단계: 구조화 (OpenAI API) =====
+            log.info("[2/4] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
+            sheet_manager.update_task_status(spreadsheet, row, "2/4 구조화중")
 
-                structured = structure_script(gpt_page, script_text, settings)
-            finally:
-                gpt_page.close()
+            structured = structure_script(script_text, settings)
 
             # 구조화된 대본을 시트에 반영
             script_data = {"title": task["주제"], "scenes": structured["scenes"]}
@@ -214,68 +192,37 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                 장면수=len(structured["scenes"]),
             )
 
-        # ===== 3단계: 이미지 생성 (컷별, 같은 대화 유지) =====
-        log.info("[3/4] 이미지 생성 중 (ChatGPT DALL-E) - %d컷...", total_cuts)
+        # ===== 3단계: 이미지 생성 (DALL-E API) =====
+        total_cuts = sum(len(s.get("cuts", [])) for s in structured["scenes"])
+        log.info("[3/4] 이미지 생성 중 (DALL-E API) - %d컷...", total_cuts)
         sheet_manager.update_task_status(spreadsheet, row, "3/4 이미지 생성중")
 
-        gpt_page = browser.new_page()
-        image_paths = []
-        try:
-            init_image_session(gpt_page, chatgpt_project)
-            os.makedirs(images_dir, exist_ok=True)
+        image_paths, failed_cuts = generate_images(
+            structured=structured,
+            images_dir=images_dir,
+            image_style=image_style,
+        )
 
-            img_idx = 0
-            failed_cuts = []
-            for scene in structured["scenes"]:
-                for cut in scene.get("cuts", []):
-                    img_idx += 1
-                    prompt = cut.get("image_prompt", "").strip()
-                    if not prompt:
-                        log.warning("  장면%d-컷%d: 이미지 프롬프트 없음, 건너뜀",
-                                    scene["scene_number"], cut["cut_number"])
-                        continue
-
-                    output_path = os.path.join(
-                        images_dir,
-                        f"s{scene['scene_number']:02d}_c{cut['cut_number']:02d}.png",
+        # 이미지 상태를 시트에 반영
+        img_idx = 0
+        for scene in structured["scenes"]:
+            for cut in scene.get("cuts", []):
+                img_idx += 1
+                output_path = os.path.join(
+                    images_dir,
+                    f"s{scene['scene_number']:02d}_c{cut['cut_number']:02d}.png",
+                )
+                if output_path in image_paths:
+                    sheet_row = 1 + img_idx
+                    sheet_manager.update_script_cut_status(
+                        spreadsheet, sheet_row, image_status="완료"
                     )
 
-                    # 이미 생성된 이미지가 있으면 건너뛰기
-                    if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
-                        log.info("  [%d/%d] 장면%d-컷%d 이미 존재, 건너뜀",
-                                 img_idx, total_cuts,
-                                 scene["scene_number"], cut["cut_number"])
-                        image_paths.append(output_path)
-                        continue
-
-                    log.info("  [%d/%d] 장면%d-컷%d 이미지 생성 중...",
-                             img_idx, total_cuts,
-                             scene["scene_number"], cut["cut_number"])
-
-                    try:
-                        result = generate_image_in_session(gpt_page, prompt, output_path)
-                        if result:
-                            image_paths.append(output_path)
-                            sheet_row = 1 + img_idx
-                            sheet_manager.update_script_cut_status(
-                                spreadsheet, sheet_row, image_status="완료"
-                            )
-                        else:
-                            cut_label = f"장면{scene['scene_number']}-컷{cut['cut_number']}"
-                            failed_cuts.append(cut_label)
-                            log.warning("  %s 이미지 저장 실패, 건너뜀", cut_label)
-                    except Exception as e:
-                        cut_label = f"장면{scene['scene_number']}-컷{cut['cut_number']}"
-                        failed_cuts.append(cut_label)
-                        log.error("  %s 이미지 생성 오류: %s. 건너뛰고 계속 진행", cut_label, e)
-
-            if failed_cuts:
-                log.warning("  이미지 생성 완료: 성공 %d컷, 실패 %d컷 (%s)",
-                            len(image_paths), len(failed_cuts), ", ".join(failed_cuts))
-            else:
-                log.info("  이미지 생성 완료 (%d컷)", len(image_paths))
-        finally:
-            gpt_page.close()
+        if failed_cuts:
+            log.warning("  이미지 생성 완료: 성공 %d컷, 실패 %d컷 (%s)",
+                        len(image_paths), len(failed_cuts), ", ".join(failed_cuts))
+        else:
+            log.info("  이미지 생성 완료 (%d컷)", len(image_paths))
 
         # ===== 4단계: CapCut 영상 편집 =====
         if edit_mode == "skip":
@@ -317,7 +264,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
 def main():
     parser = argparse.ArgumentParser(description="웹툰 숏폼 자동 생성기")
-    parser.add_argument("--login", action="store_true", help="계정 로그인만 수행 (최초 1회)")
+    parser.add_argument("--login", action="store_true", help="CapCut 로그인만 수행 (최초 1회)")
     args = parser.parse_args()
 
     # ===== Google Sheets 연결 =====
@@ -337,16 +284,16 @@ def main():
             log.info("로그인 완료 - 종료합니다.")
             return
 
-        # ===== 실행 모드 (로그인 건너뜀) =====
+        # ===== 실행 모드 =====
         _validate_settings(settings)
 
         # 대기 작업 확인
         pending = sheet_manager.get_pending_tasks(spreadsheet)
 
         if not pending:
-            # 키워드 프로젝트 실행 → 파싱 → 1개 선택 → 작업 추가
+            # 키워드 발굴 → 파싱 → 1개 선택 → 작업 추가
             log.info("대기 작업이 없어 키워드를 발굴합니다...")
-            selected = _discover_and_select_keyword(browser, settings)
+            selected = _discover_and_select_keyword(settings)
 
             # 선택된 키워드의 제목+키워드+CTA를 주제로 작업 추가
             topic_text = _build_script_prompt(selected)

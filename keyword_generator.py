@@ -1,7 +1,6 @@
-"""ChatGPT 키워드 프로젝트 응답 파싱 모듈
+"""OpenAI API 기반 키워드 발굴 모듈
 
-ChatGPT 키워드 프로젝트에 카테고리를 전송하면
-프로젝트 지침에 따라 키워드 항목을 생성합니다.
+카테고리를 입력받아 키워드 항목을 생성합니다.
 
 응답 양식 예시:
     [모바일-1] 갤럭시 S26 자급제 vs 통신사 비교 세트
@@ -12,53 +11,41 @@ ChatGPT 키워드 프로젝트에 카테고리를 전송하면
 import os
 import re
 
-from playwright.sync_api import Page
-
-import config
-from browser_manager import ensure_login
-from utils import log, send_and_wait, navigate_to_project
+from openai_client import chat, load_system_prompt
+from utils import log
 
 
 def _parse_keyword_items(text: str) -> list[dict]:
-    """키워드 프로젝트 응답에서 항목을 파싱합니다.
+    """키워드 응답에서 항목을 파싱합니다.
 
     지원하는 형식:
       형식A: [모바일-1] 제목 텍스트
-      형식B: ◆ 모바일-1 (또는 🔷, 📌 등 이모지 + 카테고리-번호)
+      형식B: ◆ 모바일-1 (또는 이모지 + 카테고리-번호)
       형식C: **모바일-1** 또는 ### 모바일-1
     """
     items = []
     seen_numbers = set()
 
-    # 카테고리-번호 패턴 (예: 인터넷-1, 모바일-2, 렌탈가전-3)
     _NUM_ID = r"[가-힣A-Za-z]+[\s]*-[\s]*\d+"
 
-    # 항목 헤더를 인식하는 통합 패턴들
     _HEADER_PATTERNS = [
-        # [모바일-1] 제목
         re.compile(rf"\[({_NUM_ID})\]\s*(.*)"),
-        # ◆ 모바일-1 제목  /  🔷 인터넷-1 제목  (이모지/특수문자 접두사)
         re.compile(rf"[◆◇●○▶►★☆🔷🔶📌📍🏷️💡✅❇️#※]\s*({_NUM_ID})\s*(.*)"),
-        # **모바일-1** 제목  (볼드 마크다운)
         re.compile(rf"\*\*({_NUM_ID})\*\*\s*(.*)"),
-        # ### 모바일-1 제목  (마크다운 헤딩)
         re.compile(rf"#{1,4}\s*({_NUM_ID})\s*(.*)"),
     ]
 
     def _match_header(line: str):
-        """라인이 항목 헤더인지 확인합니다."""
         for pat in _HEADER_PATTERNS:
             m = pat.search(line)
             if m:
-                num = re.sub(r"\s+", "", m.group(1))  # 공백 제거 (인터넷 - 1 → 인터넷-1)
+                num = re.sub(r"\s+", "", m.group(1))
                 title = m.group(2).strip() if m.group(2) else ""
-                # "글자 수", "채점" 등은 제외
                 if "글자" in num or "채점" in num:
                     return None
                 return num, title
         return None
 
-    # 라인별로 순회하며 항목 파싱
     lines = text.split("\n")
     current_item = None
 
@@ -89,7 +76,6 @@ def _parse_keyword_items(text: str) -> list[dict]:
                 current_item["keywords"] = [
                     k.strip() for k in kw_str.split(",") if k.strip()
                 ]
-                # 제목이 비어있으면 첫 번째 키워드를 제목으로 사용
                 if not current_item["title"] and current_item["keywords"]:
                     current_item["title"] = current_item["keywords"][0]
                 continue
@@ -99,7 +85,6 @@ def _parse_keyword_items(text: str) -> list[dict]:
                 current_item["cta"] = cta_match.group(1).strip()
                 continue
 
-    # 제목이 비어있는 항목: 키워드 조합으로 제목 생성
     for item in items:
         if not item["title"] and item["keywords"]:
             item["title"] = ", ".join(item["keywords"][:3])
@@ -121,25 +106,15 @@ def _save_response_debug(response: str, category: str) -> str:
 
 
 def generate_keywords(
-    page: Page,
     category: str,
     count: int = 5,
-    project_url: str = "",
 ) -> list[dict]:
-    """ChatGPT 키워드 프로젝트에서 키워드 항목을 생성합니다."""
-    if not project_url:
-        raise ValueError(
-            "ChatGPT 키워드 프로젝트 URL이 설정되지 않았습니다. "
-            "시트 [설정] 탭에서 'ChatGPT 키워드 프로젝트 URL'을 입력하세요."
-        )
+    """OpenAI API로 키워드 항목을 생성합니다."""
+    system_prompt = load_system_prompt("keyword")
+    user_prompt = f"{category} {count}개"
 
-    ensure_login(page, config.CHATGPT_URL, "ChatGPT")
-    navigate_to_project(page, config.CHATGPT_URL, project_url)
-
-    prompt = f"{category} {count}개"
-    log.info("ChatGPT 키워드 프로젝트에 요청 중 (%s, %d개)...", category, count)
-
-    response = send_and_wait(page, prompt)
+    log.info("키워드 발굴 중 (API) - %s, %d개...", category, count)
+    response = chat(system_prompt, user_prompt)
 
     debug_path = _save_response_debug(response, category)
     log.info("응답 저장됨: %s (%d자)", debug_path, len(response))
@@ -164,9 +139,8 @@ def select_keyword(items: list[dict]) -> dict:
     print("  키워드 항목 목록 (1개를 선택하세요)")
     print("-" * 60)
     for i, item in enumerate(items, 1):
-        # 카테고리에서 번호 부분 추출 (예: "모바일-1" → "모바일")
         cat = re.sub(r"[-\d]+$", "", item["number"]).strip()
-        kw_str = ", ".join(item["keywords"][:3])  # 최대 3개만 표시
+        kw_str = ", ".join(item["keywords"][:3])
         if len(item["keywords"]) > 3:
             kw_str += " ..."
         print(f"  {i}. [{cat}] {item['title']}")

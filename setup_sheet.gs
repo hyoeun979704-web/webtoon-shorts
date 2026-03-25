@@ -17,9 +17,6 @@ function step1_설정탭() {
     ['항목', '값', '설명'],
     ['카테고리', '', '필수. 영상 주제 카테고리 (예: 연애, 직장, 가족, 공포, 먹방)'],
     ['키워드 개수', '5', '자동 발굴할 토픽 수 (기본: 5)'],
-    ['ChatGPT 키워드 프로젝트 URL', '', 'ChatGPT 키워드 추출 프로젝트 URL (있으면 프로젝트 컨텍스트 활용)'],
-    ['ChatGPT 대본 프로젝트 URL', '', 'ChatGPT 웹툰 쇼츠 대본 프로젝트 URL (있으면 프로젝트 컨텍스트 활용)'],
-    ['ChatGPT 이미지 프로젝트 URL', '', 'ChatGPT 이미지 생성 프로젝트 URL (있으면 프로젝트 컨텍스트 활용)'],
     ['이미지 스타일', 'webtoon style, manhwa art, digital illustration', 'DALL-E 프롬프트에 포함할 스타일 키워드'],
     ['장면 수', '6', '영상 구성 장면 수 (기본: 5)'],
     ['장면당 컷 수', '3~4', '장면당 이미지 수 범위 (기본: 3~4)'],
@@ -28,7 +25,6 @@ function step1_설정탭() {
     ['편집 모드', 'capcut', 'capcut=CapCut 자동편집, skip=에셋만 생성'],
     ['대본 검토', 'Y', 'Y=대본 생성 후 시트에서 수정 가능, N=바로 진행'],
     ['편집 검토', 'Y', 'Y=CapCut 배치 후 수동 확인, N=바로 내보내기'],
-    ['ChatGPT 계정', '', ''],
   ];
   sheet.getRange(1, 1, data.length, 3).setValues(data);
   sheet.getRange('A1:C1').setBackground('#292833').setFontColor('#ffffff').setFontWeight('bold');
@@ -82,8 +78,9 @@ function step3_대본탭() {
   SpreadsheetApp.getUi().alert(
     '세팅 완료!\n\n' +
     '다음 단계:\n' +
-    '1. [설정] 탭에서 카테고리, ChatGPT 프로젝트 URL 입력\n' +
-    '2. python main.py --login (서비스 로그인)\n' +
-    '3. python main.py (자동 실행)'
+    '1. [설정] 탭에서 카테고리 입력\n' +
+    '2. .env 파일에 OPENAI_API_KEY 설정\n' +
+    '3. python main.py --login (CapCut 로그인)\n' +
+    '4. python main.py (자동 실행)'
   );
 }
