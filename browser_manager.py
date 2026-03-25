@@ -66,6 +66,86 @@ def _remove_lock_files(profile_dir: str) -> None:
                 pass
 
 
+def _inject_stealth(page: Page) -> None:
+    """페이지에 자동화 감지 우회 스크립트를 주입합니다."""
+    try:
+        page.add_init_script("""
+            // navigator.webdriver 제거
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+            // chrome.runtime 속성 추가 (일반 Chrome처럼 보이게)
+            window.chrome = window.chrome || {};
+            window.chrome.runtime = window.chrome.runtime || {};
+
+            // Permissions API 감지 우회
+            const origQuery = window.navigator.permissions?.query;
+            if (origQuery) {
+                window.navigator.permissions.query = (params) => {
+                    if (params.name === 'notifications') {
+                        return Promise.resolve({ state: Notification.permission });
+                    }
+                    return origQuery(params);
+                };
+            }
+
+            // plugins 배열 위장 (빈 배열이면 headless로 감지됨)
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5],
+            });
+
+            // languages 위장
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['ko-KR', 'ko', 'en-US', 'en'],
+            });
+        """)
+    except Exception:
+        pass  # 이미 닫힌 페이지 등
+
+
+def _wait_for_captcha(page: Page, service_name: str) -> None:
+    """Cloudflare/reCAPTCHA 등 사람 확인 페이지가 감지되면 사용자에게 알리고 대기합니다."""
+    captcha_selectors = [
+        'iframe[src*="challenges.cloudflare.com"]',
+        '#challenge-running',
+        '#challenge-stage',
+        'iframe[src*="recaptcha"]',
+        'iframe[src*="hcaptcha"]',
+        'div[class*="captcha"]',
+        'text="Verify you are human"',
+        'text="사람인지 확인"',
+        'text="확인 중"',
+    ]
+    selector = ", ".join(captcha_selectors)
+
+    try:
+        captcha = page.locator(selector).first
+        if captcha.is_visible(timeout=3000):
+            log.warning("")
+            log.warning("=" * 50)
+            log.warning("  %s에서 사람 확인(CAPTCHA)이 감지되었습니다!", service_name)
+            log.warning("  브라우저 창에서 직접 CAPTCHA를 완료해주세요.")
+            log.warning("=" * 50)
+
+            # CAPTCHA가 사라질 때까지 대기 (최대 5분)
+            for _ in range(300):
+                page.wait_for_timeout(1000)
+                try:
+                    if not captcha.is_visible():
+                        log.info("  CAPTCHA 통과 완료!")
+                        page.wait_for_timeout(2000)
+                        return
+                except Exception:
+                    # 요소가 DOM에서 사라짐 = 통과
+                    log.info("  CAPTCHA 통과 완료!")
+                    page.wait_for_timeout(2000)
+                    return
+
+            log.warning("  CAPTCHA 대기 타임아웃. 수동으로 완료 후 Enter를 눌러주세요.")
+            input("  → CAPTCHA 완료 후 Enter: ")
+    except Exception:
+        pass  # CAPTCHA 없으면 정상 진행
+
+
 class BrowserManager:
     """Playwright 브라우저 세션을 관리합니다."""
 
@@ -95,8 +175,14 @@ class BrowserManager:
                     timezone_id="Asia/Seoul",
                     args=[
                         "--disable-blink-features=AutomationControlled",
+                        "--disable-infobars",
+                        "--no-sandbox",
                     ],
                 )
+                # 자동화 감지 우회: navigator.webdriver 플래그 제거
+                for p in self._context.pages:
+                    _inject_stealth(p)
+                self._context.on("page", _inject_stealth)
                 return self._context
             except Exception as e:
                 last_error = e
@@ -162,6 +248,9 @@ def ensure_login(page: Page, service_url: str, service_name: str, account_hint: 
     """서비스에 로그인 상태인지 확인하고, 아니면 사용자에게 수동 로그인을 요청합니다."""
     _safe_goto(page, service_url, wait_until="domcontentloaded", timeout=30000)
     page.wait_for_timeout(3000)
+
+    # Cloudflare/CAPTCHA 확인이 나오면 사용자에게 알리고 대기
+    _wait_for_captcha(page, service_name)
 
     current_url = page.url.lower()
     login_keywords = ["login", "signin", "sign-in", "auth", "accounts"]

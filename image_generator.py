@@ -15,7 +15,7 @@ import requests
 from playwright.sync_api import Page
 
 import config
-from browser_manager import ensure_login
+from browser_manager import ensure_login, _wait_for_captcha
 from utils import log, navigate_to_project, send_and_wait, wait_for_response_complete
 
 
@@ -514,6 +514,9 @@ def _send_image_prompt(page: Page, prompt: str) -> None:
         f"{prompt}\n\n"
         f"IMPORTANT: No text, letters, words, or speech bubbles in the image."
     )
+
+    # CAPTCHA/사람 확인이 떠있으면 사용자에게 알리고 대기
+    _wait_for_captcha(page, "ChatGPT")
 
     editor = page.locator("#prompt-textarea, [contenteditable='true']").first
     editor.wait_for(timeout=10000)
