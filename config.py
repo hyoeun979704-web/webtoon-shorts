@@ -13,6 +13,7 @@ GOOGLE_SHEET_URL = os.getenv(
 
 # 브라우저 설정
 BROWSER_PROFILE_DIR = os.getenv("BROWSER_PROFILE_DIR", "./browser_data")
+BROWSER_CHANNEL = os.getenv("BROWSER_CHANNEL", "msedge")  # msedge, chrome, chromium
 HEADLESS = False  # 자동화 과정을 눈으로 확인하려면 False
 SLOW_MO = 500     # 밀리초 단위 딜레이 (안정성용, 0이면 최대 속도)
 

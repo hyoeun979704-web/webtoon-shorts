@@ -213,54 +213,12 @@ def _strip_thinking_prefix(text: str) -> str:
 
 
 def _wait_for_cloudflare(page: Page, timeout_sec: int = 120) -> None:
-    """Cloudflare 보안 확인 페이지가 감지되면 사용자가 통과할 때까지 대기합니다."""
-    def _is_challenge() -> bool:
-        try:
-            url = page.url.lower()
-            if "challenges.cloudflare.com" in url:
-                return True
-            title = page.title().lower()
-            if any(kw in title for kw in ("just a moment", "확인 중", "attention required")):
-                return True
-            for sel in (
-                'iframe[src*="challenges.cloudflare.com"]',
-                '#challenge-running', '#challenge-stage',
-                '#turnstile-wrapper', 'iframe[src*="turnstile"]',
-            ):
-                try:
-                    if page.locator(sel).first.is_visible(timeout=300):
-                        return True
-                except Exception:
-                    pass
-            try:
-                body = page.locator("body").first.inner_text(timeout=1000)
-                if len(body) < 300 and any(
-                    kw in body for kw in ("Verify you are human", "사람인지 확인",
-                                          "보안 확인 수행 중", "확인하는 중",
-                                          "확인 중", "Just a moment")
-                ):
-                    return True
-            except Exception:
-                pass
-        except Exception:
-            pass
-        return False
+    """Cloudflare 보안 확인 페이지가 감지되면 통과할 때까지 대기합니다.
 
-    if not _is_challenge():
-        return
-
-    log.info("  Cloudflare 보안 확인 감지! 브라우저에서 체크박스를 클릭해주세요...")
-
-    for elapsed in range(timeout_sec):
-        page.wait_for_timeout(1000)
-        if not _is_challenge():
-            log.info("  보안 확인 통과! (%d초)", elapsed + 1)
-            page.wait_for_timeout(2000)
-            return
-        if elapsed > 0 and elapsed % 30 == 0:
-            log.warning("  아직 확인 중... 체크박스가 있으면 클릭해주세요. (%d초)", elapsed)
-
-    log.warning("  보안 확인 타임아웃 (%d초). 그래도 계속 시도합니다...", timeout_sec)
+    browser_manager의 _wait_for_captcha를 재사용합니다.
+    """
+    from browser_manager import _wait_for_captcha
+    _wait_for_captcha(page, "ChatGPT")
 
 
 def send_prompt(page: Page, prompt: str) -> None:

@@ -70,50 +70,164 @@ def _inject_stealth(page: Page) -> None:
     """페이지에 자동화 감지 우회 스크립트를 주입합니다."""
     try:
         page.add_init_script("""
-            // navigator.webdriver 제거
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            // ── navigator.webdriver 완전 제거 ──
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined,
+                configurable: true,
+            });
+            // Proxy를 사용해 prototype 체인에서도 숨김
+            const origGet = Object.getOwnPropertyDescriptor(Navigator.prototype, 'webdriver');
+            if (origGet) {
+                Object.defineProperty(Navigator.prototype, 'webdriver', {
+                    get: () => undefined,
+                    configurable: true,
+                });
+            }
 
-            // chrome.runtime 속성 추가 (일반 Chrome처럼 보이게)
+            // ── chrome.runtime 속성 추가 (일반 Chrome/Edge처럼 보이게) ──
             window.chrome = window.chrome || {};
-            window.chrome.runtime = window.chrome.runtime || {};
+            window.chrome.runtime = window.chrome.runtime || {
+                connect: function() {},
+                sendMessage: function() {},
+            };
+            window.chrome.csi = window.chrome.csi || function() { return {}; };
+            window.chrome.loadTimes = window.chrome.loadTimes || function() { return {}; };
 
-            // Permissions API 감지 우회
+            // ── Permissions API 감지 우회 ──
             const origQuery = window.navigator.permissions?.query;
             if (origQuery) {
                 window.navigator.permissions.query = (params) => {
                     if (params.name === 'notifications') {
                         return Promise.resolve({ state: Notification.permission });
                     }
-                    return origQuery(params);
+                    return origQuery.call(window.navigator.permissions, params);
                 };
             }
 
-            // plugins 배열 위장 (빈 배열이면 headless로 감지됨)
+            // ── plugins 배열 위장 (빈 배열이면 headless로 감지됨) ──
             Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5],
+                get: () => [
+                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
+                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+                    { name: 'Native Client', filename: 'internal-nacl-plugin' },
+                ],
+                configurable: true,
             });
 
-            // languages 위장
+            // ── mimeTypes 위장 ──
+            Object.defineProperty(navigator, 'mimeTypes', {
+                get: () => [
+                    { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+                ],
+                configurable: true,
+            });
+
+            // ── languages 위장 ──
             Object.defineProperty(navigator, 'languages', {
                 get: () => ['ko-KR', 'ko', 'en-US', 'en'],
+                configurable: true,
             });
+
+            // ── Automation-related CDP 속성 제거 ──
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+            // ── WebGL vendor/renderer 위장 ──
+            const getParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(param) {
+                if (param === 37445) return 'Google Inc. (ANGLE)';  // UNMASKED_VENDOR_WEBGL
+                if (param === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics, OpenGL 4.1)';
+                return getParameter.call(this, param);
+            };
+
+            // ── iframe contentWindow 접근 시 감지 방지 ──
+            const origAttachShadow = Element.prototype.attachShadow;
+            Element.prototype.attachShadow = function() {
+                return origAttachShadow.call(this, ...arguments);
+            };
         """)
     except Exception:
         pass  # 이미 닫힌 페이지 등
 
 
+def _try_click_turnstile(page: Page) -> bool:
+    """Cloudflare Turnstile iframe 안의 체크박스를 자동 클릭 시도합니다."""
+    try:
+        # Turnstile iframe 찾기
+        iframe_selectors = [
+            'iframe[src*="challenges.cloudflare.com"]',
+            'iframe[src*="turnstile"]',
+            'iframe[title*="Cloudflare"]',
+            'iframe[title*="challenge"]',
+        ]
+        for sel in iframe_selectors:
+            try:
+                iframe_el = page.locator(sel).first
+                if not iframe_el.is_visible(timeout=500):
+                    continue
+                frame = iframe_el.content_frame()
+                if not frame:
+                    continue
+
+                # iframe 내부의 체크박스/버튼 클릭
+                click_targets = [
+                    'input[type="checkbox"]',
+                    '#challenge-stage input',
+                    '.cb-lb',  # Turnstile checkbox label
+                    'label',
+                    'body',  # 마지막 수단: iframe body 클릭
+                ]
+                for target in click_targets:
+                    try:
+                        el = frame.locator(target).first
+                        if el.is_visible(timeout=300):
+                            el.click()
+                            log.info("  Turnstile 체크박스 클릭 시도: %s", target)
+                            return True
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+
+        # iframe 접근 불가 시, 페이지 내 Turnstile 요소 직접 클릭
+        direct_targets = [
+            '#turnstile-wrapper',
+            '[class*="turnstile"]',
+            '.cf-turnstile',
+        ]
+        for sel in direct_targets:
+            try:
+                el = page.locator(sel).first
+                if el.is_visible(timeout=300):
+                    # 요소 중앙 클릭
+                    box = el.bounding_box()
+                    if box:
+                        page.mouse.click(
+                            box["x"] + box["width"] / 2,
+                            box["y"] + box["height"] / 2,
+                        )
+                        log.info("  Turnstile 요소 클릭 시도: %s", sel)
+                        return True
+            except Exception:
+                continue
+
+    except Exception as e:
+        log.debug("  Turnstile 자동 클릭 실패: %s", e)
+    return False
+
+
 def _wait_for_captcha(page: Page, service_name: str) -> None:
     """Cloudflare Turnstile/CAPTCHA 페이지가 감지되면 자동 통과를 대기합니다.
 
-    ChatGPT: Cloudflare 또는 자체 확인
-
-    페이지 URL/타이틀/내용으로 감지하며, 서비스 페이지가 정상 로드될 때까지 대기합니다.
+    1단계: 자동 통과 대기 (실제 브라우저 사용 시 대부분 자동 통과)
+    2단계: Turnstile 체크박스 자동 클릭 시도
+    3단계: 수동 완료 요청
     """
     def _is_challenge_page() -> bool:
         """현재 페이지가 Cloudflare 챌린지 등 확인 페이지인지 판단합니다."""
         try:
             url = page.url.lower()
-            # Cloudflare 챌린지 URL 패턴
             if "challenges.cloudflare.com" in url:
                 return True
 
@@ -121,7 +235,6 @@ def _wait_for_captcha(page: Page, service_name: str) -> None:
             if any(kw in title for kw in ("just a moment", "확인 중", "attention required")):
                 return True
 
-            # 페이지 내용 체크 (짧은 타임아웃으로 빠르게)
             for sel in (
                 'iframe[src*="challenges.cloudflare.com"]',
                 '#challenge-running',
@@ -135,11 +248,11 @@ def _wait_for_captcha(page: Page, service_name: str) -> None:
                 except Exception:
                     pass
 
-            # 본문 텍스트로 판단 (DOM이 거의 비어있고 확인 메시지만 있는 경우)
             try:
                 body_text = page.locator("body").first.inner_text(timeout=1000)
-                if len(body_text) < 200 and any(
+                if len(body_text) < 300 and any(
                     kw in body_text for kw in ("Verify you are human", "사람인지 확인",
+                                                 "보안 확인 수행 중", "확인하는 중",
                                                  "확인 중", "Just a moment")
                 ):
                     return True
@@ -150,29 +263,34 @@ def _wait_for_captcha(page: Page, service_name: str) -> None:
             pass
         return False
 
-    # 빠른 체크: 챌린지 페이지가 아니면 즉시 반환
     if not _is_challenge_page():
         return
 
-    log.info("  %s: 사람 확인(Cloudflare) 감지. 자동 통과 대기 중...", service_name)
+    log.info("  %s: Cloudflare 보안 확인 감지. 자동 통과 대기 중...", service_name)
 
-    # 최대 2분 대기 (Turnstile은 보통 5~15초에 자동 통과)
+    clicked = False
     for elapsed in range(120):
         page.wait_for_timeout(1000)
 
         if not _is_challenge_page():
-            log.info("  사람 확인 통과 완료! (%d초)", elapsed + 1)
-            page.wait_for_timeout(2000)  # 리다이렉트 안정화
+            log.info("  보안 확인 통과! (%d초)", elapsed + 1)
+            page.wait_for_timeout(2000)
             return
 
-        # 30초마다 안내
+        # 5초, 10초, 20초에 체크박스 자동 클릭 시도
+        if not clicked and elapsed in (5, 10, 20, 40):
+            if _try_click_turnstile(page):
+                clicked = True
+
         if elapsed > 0 and elapsed % 30 == 0:
+            # 30초 경과 시 재시도
+            _try_click_turnstile(page)
             log.warning("  아직 확인 중... 브라우저에서 체크박스가 있으면 클릭해주세요. (%d초)", elapsed)
 
     # 타임아웃 → 수동 완료 요청
     log.warning("")
     log.warning("=" * 50)
-    log.warning("  %s 사람 확인을 자동 통과하지 못했습니다.", service_name)
+    log.warning("  %s Cloudflare 보안 확인을 자동 통과하지 못했습니다.", service_name)
     log.warning("  브라우저에서 직접 완료 후 Enter를 눌러주세요.")
     log.warning("=" * 50)
     input("  → 확인 완료 후 Enter: ")
@@ -199,7 +317,9 @@ class BrowserManager:
         last_error = None
         for attempt in range(3):
             try:
-                self._context = self._playwright.chromium.launch_persistent_context(
+                # 실제 설치된 브라우저(Edge/Chrome) 사용으로 Cloudflare 우회
+                channel = getattr(config, "BROWSER_CHANNEL", "msedge")
+                launch_kwargs = dict(
                     user_data_dir=profile_dir,
                     headless=config.HEADLESS,
                     slow_mo=config.SLOW_MO,
@@ -210,7 +330,16 @@ class BrowserManager:
                         "--disable-blink-features=AutomationControlled",
                         "--disable-infobars",
                         "--no-sandbox",
+                        "--disable-dev-shm-usage",
                     ],
+                    ignore_default_args=["--enable-automation"],
+                )
+                if channel and channel != "chromium":
+                    launch_kwargs["channel"] = channel
+                    log.info("  브라우저 채널: %s (실제 설치된 브라우저 사용)", channel)
+
+                self._context = self._playwright.chromium.launch_persistent_context(
+                    **launch_kwargs
                 )
                 # 자동화 감지 우회: navigator.webdriver 플래그 제거
                 for p in self._context.pages:
