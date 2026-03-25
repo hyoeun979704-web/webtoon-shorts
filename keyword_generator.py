@@ -1,6 +1,6 @@
-"""Claude 키워드 프로젝트 응답 파싱 모듈
+"""ChatGPT 키워드 프로젝트 응답 파싱 모듈
 
-Claude 키워드 프로젝트에 카테고리를 전송하면
+ChatGPT 키워드 프로젝트에 카테고리를 전송하면
 프로젝트 지침에 따라 키워드 항목을 생성합니다.
 
 응답 양식 예시:
@@ -20,7 +20,7 @@ from utils import log, send_and_wait, navigate_to_project
 
 
 def _parse_keyword_items(text: str) -> list[dict]:
-    """Claude 키워드 프로젝트 응답에서 항목을 파싱합니다.
+    """키워드 프로젝트 응답에서 항목을 파싱합니다.
 
     지원하는 형식:
       형식A: [모바일-1] 제목 텍스트
@@ -126,18 +126,18 @@ def generate_keywords(
     count: int = 5,
     project_url: str = "",
 ) -> list[dict]:
-    """Claude 키워드 프로젝트에서 키워드 항목을 생성합니다."""
+    """ChatGPT 키워드 프로젝트에서 키워드 항목을 생성합니다."""
     if not project_url:
         raise ValueError(
-            "Claude 키워드 프로젝트 URL이 설정되지 않았습니다. "
-            "시트 [설정] 탭에서 'Claude 키워드 프로젝트 URL'을 입력하세요."
+            "ChatGPT 키워드 프로젝트 URL이 설정되지 않았습니다. "
+            "시트 [설정] 탭에서 'ChatGPT 키워드 프로젝트 URL'을 입력하세요."
         )
 
-    ensure_login(page, config.CLAUDE_URL, "Claude")
-    navigate_to_project(page, config.CLAUDE_URL, project_url)
+    ensure_login(page, config.CHATGPT_URL, "ChatGPT")
+    navigate_to_project(page, config.CHATGPT_URL, project_url)
 
     prompt = f"{category} {count}개"
-    log.info("Claude 키워드 프로젝트에 요청 중 (%s, %d개)...", category, count)
+    log.info("ChatGPT 키워드 프로젝트에 요청 중 (%s, %d개)...", category, count)
 
     response = send_and_wait(page, prompt)
 

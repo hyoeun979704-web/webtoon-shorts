@@ -1,6 +1,6 @@
-"""Claude 프로젝트를 사용한 웹툰 대본 생성 모듈
+"""ChatGPT 프로젝트를 사용한 웹툰 대본 생성 모듈
 
-지정된 Claude 대본 프로젝트에 주제(키워드)만 전송하면
+지정된 ChatGPT 대본 프로젝트에 주제(키워드)만 전송하면
 프로젝트에 설정된 지침에 따라 대본을 생성합니다.
 
 대본 생성 후 같은 대화에서 구조화 요청을 추가로 보내
@@ -33,7 +33,7 @@ from utils import log, send_and_wait, navigate_to_project
 
 
 def _extract_script_text(response: str) -> str:
-    """Claude 대본 프로젝트 응답에서 대본 텍스트만 추출합니다.
+    """대본 프로젝트 응답에서 대본 텍스트만 추출합니다.
 
     프로세스 로그, 메타데이터(글자 수, 채점), 채점 근거 메모를 제거하고
     순수 대본 텍스트만 반환합니다.
@@ -154,21 +154,21 @@ def generate_script(
     topic: str,
     project_url: str = "",
 ) -> str:
-    """Claude 대본 프로젝트에서 대본을 생성합니다.
+    """ChatGPT 대본 프로젝트에서 대본을 생성합니다.
 
     Returns:
         추출된 대본 텍스트 (순수 나레이션만)
     """
     if not project_url:
         raise ValueError(
-            "Claude 대본 프로젝트 URL이 설정되지 않았습니다. "
-            "시트 [설정] 탭에서 'Claude 대본 프로젝트 URL'을 입력하세요."
+            "ChatGPT 대본 프로젝트 URL이 설정되지 않았습니다. "
+            "시트 [설정] 탭에서 'ChatGPT 대본 프로젝트 URL'을 입력하세요."
         )
 
-    ensure_login(page, config.CLAUDE_URL, "Claude")
-    navigate_to_project(page, config.CLAUDE_URL, project_url)
+    ensure_login(page, config.CHATGPT_URL, "ChatGPT")
+    navigate_to_project(page, config.CHATGPT_URL, project_url)
 
-    log.info("Claude 대본 프로젝트에 요청 중 - 주제: '%s'", topic)
+    log.info("ChatGPT 대본 프로젝트에 요청 중 - 주제: '%s'", topic)
 
     response = send_and_wait(page, topic, timeout_sec=300)
 
@@ -268,7 +268,7 @@ def structure_script(
 ) -> dict:
     """대본 텍스트를 장면/컷/이미지 프롬프트/편집 가이드로 구조화합니다.
 
-    기존 Claude 대화(대본 생성 직후)에서 이어서 구조화를 요청합니다.
+    기존 ChatGPT 대화(대본 생성 직후)에서 이어서 구조화를 요청합니다.
 
     Returns:
         {"scenes": [{"scene_number", "narration", "transition", "cuts": [...]}]}

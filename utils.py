@@ -38,7 +38,7 @@ def extract_json(text: str, required_key: str = "") -> dict:
     """응답 텍스트에서 JSON 블록을 추출합니다.
 
     Args:
-        text: Claude/ChatGPT 응답 텍스트
+        text: ChatGPT 응답 텍스트
         required_key: JSON 내에 반드시 있어야 하는 키 (검증용)
 
     Raises:
@@ -74,12 +74,12 @@ def extract_json(text: str, required_key: str = "") -> dict:
 # ── Playwright 헬퍼 ──
 
 def wait_for_response_complete(page: Page, timeout_sec: int = 120) -> None:
-    """Claude/ChatGPT의 응답이 완료될 때까지 대기합니다.
+    """ChatGPT의 응답이 완료될 때까지 대기합니다.
 
     '응답 중지' 버튼이 사라지면 응답 완료로 판단합니다.
     버튼을 찾지 못하면 data-is-streaming 속성으로 대체 감지합니다.
     """
-    # Claude/ChatGPT 모두 커버하는 정지 버튼 셀렉터
+    # ChatGPT 정지 버튼 셀렉터
     stop_selectors = [
         'button[aria-label="Stop Response"]',
         'button[aria-label="Stop response"]',
@@ -91,7 +91,7 @@ def wait_for_response_complete(page: Page, timeout_sec: int = 120) -> None:
     ]
     stop_selector = ", ".join(stop_selectors)
 
-    # 스트리밍 상태 감지용 (Claude)
+    # 스트리밍 상태 감지용
     streaming_selector = '[data-is-streaming="true"]'
 
     page.wait_for_timeout(3000)  # 응답 시작 대기
@@ -141,32 +141,23 @@ def wait_for_response_complete(page: Page, timeout_sec: int = 120) -> None:
 
 
 def get_assistant_response(page: Page) -> str:
-    """페이지에서 마지막 어시스턴트(Claude/ChatGPT) 응답 텍스트를 추출합니다.
-
-    Claude 확장 사고(thinking) 블록을 제외하고 순수 응답만 추출합니다.
-    """
-    # 1차: JavaScript로 thinking 블록 제외하여 텍스트 추출
+    """페이지에서 마지막 어시스턴트(ChatGPT) 응답 텍스트를 추출합니다."""
+    # 1차: JavaScript로 응답 텍스트 추출
     try:
         text = page.evaluate("""
             () => {
-                // Claude 응답 요소 탐색
+                // ChatGPT 응답 요소 탐색
                 const selectors = [
-                    '[data-testid="chat-message-text"]',
-                    '.font-claude-message',
                     '[data-message-author-role="assistant"]',
+                    '[data-testid="chat-message-text"]',
+                    '.markdown',
+                    '.prose',
                 ];
                 for (const sel of selectors) {
                     const els = document.querySelectorAll(sel);
                     if (els.length === 0) continue;
                     const last = els[els.length - 1];
-                    // thinking/reasoning 블록 제거한 클론 생성
-                    const clone = last.cloneNode(true);
-                    const removes = clone.querySelectorAll(
-                        'details, [data-testid*="thinking"], [class*="thinking"], ' +
-                        '[class*="Thinking"], summary, [data-testid*="reasoning"]'
-                    );
-                    removes.forEach(el => el.remove());
-                    const t = clone.innerText.trim();
+                    const t = last.innerText.trim();
                     if (t && t.length > 20) return t;
                 }
                 return '';
@@ -179,12 +170,11 @@ def get_assistant_response(page: Page) -> str:
 
     # 2차: 기존 셀렉터 방식 폴백
     selectors = [
-        "[data-testid='chat-message-text']",
-        ".font-claude-message",
         "[data-message-author-role='assistant']",
+        "[data-testid='chat-message-text']",
         "[data-is-streaming='false']",
-        ".prose",
         ".markdown",
+        ".prose",
     ]
     for sel in selectors:
         try:
@@ -205,9 +195,9 @@ def get_assistant_response(page: Page) -> str:
 
 
 def _strip_thinking_prefix(text: str) -> str:
-    """응답 앞부분에 포함된 Claude 확장 사고 요약 텍스트를 제거합니다.
+    """응답 앞부분에 포함된 사고 요약 텍스트를 제거합니다.
 
-    Claude가 thinking 블록 요약을 응답 앞에 붙이는 경우가 있어
+    LLM이 thinking 블록 요약을 응답 앞에 붙이는 경우가 있어
     첫 줄이 중복되면 제거합니다.
     """
     lines = text.split("\n")
@@ -274,11 +264,11 @@ def _wait_for_cloudflare(page: Page, timeout_sec: int = 120) -> None:
 
 
 def send_prompt(page: Page, prompt: str) -> None:
-    """Claude/ChatGPT 입력창에 프롬프트를 입력하고 전송합니다."""
+    """ChatGPT 입력창에 프롬프트를 입력하고 전송합니다."""
     # Cloudflare 보안 확인이 있으면 통과될 때까지 대기
     _wait_for_cloudflare(page)
 
-    # Claude 또는 ChatGPT 입력창 탐색
+    # ChatGPT 입력창 탐색
     editor_selectors = [
         '[contenteditable="true"]',
         '#prompt-textarea',
@@ -349,7 +339,7 @@ def _safe_goto(page: Page, url: str, **kwargs):
 
 
 def navigate_to_project(page: Page, base_url: str, project_url: str = "") -> None:
-    """Claude/ChatGPT 프로젝트 또는 새 대화 페이지로 이동합니다.
+    """ChatGPT 프로젝트 또는 새 대화 페이지로 이동합니다.
 
     프로젝트 페이지에는 이미 입력창이 있으므로
     별도 버튼 클릭 없이 바로 프롬프트를 입력할 수 있습니다.

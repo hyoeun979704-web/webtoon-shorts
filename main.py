@@ -31,7 +31,6 @@ from utils import log
 def login_all(browser: BrowserManager, settings: dict = None):
     """모든 서비스에 미리 로그인합니다."""
     services = [
-        (config.CLAUDE_URL, "Claude", "Claude 계정"),
         (config.CHATGPT_URL, "ChatGPT", "ChatGPT 계정"),
         (config.CAPCUT_URL, "CapCut", "CapCut 계정"),
     ]
@@ -58,20 +57,20 @@ def _discover_and_select_keyword(browser: BrowserManager, settings: dict) -> dic
     """키워드 프로젝트 실행 → 응답 파싱 → 1개 선택."""
     category = settings.get("카테고리", "").strip()
     count = int(settings.get("키워드 개수", "6") or "6")
-    keyword_project = settings.get("Claude 키워드 프로젝트 URL", "").strip()
+    keyword_project = settings.get("ChatGPT 키워드 프로젝트 URL", "").strip()
 
     log.info("카테고리 [%s]에서 키워드 %d개 발굴 중...", category, count)
 
-    claude_page = browser.new_page()
+    gpt_page = browser.new_page()
     try:
         items = generate_keywords(
-            claude_page,
+            gpt_page,
             category=category,
             count=count,
             project_url=keyword_project,
         )
     finally:
-        claude_page.close()
+        gpt_page.close()
 
     selected = select_keyword(items)
     return selected
@@ -120,8 +119,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
     # 설정 읽기
     review_script = settings.get("대본 검토", "Y").strip().upper() == "Y"
-    script_project = settings.get("Claude 대본 프로젝트 URL", "").strip()
-    chatgpt_project = settings.get("ChatGPT 프로젝트 URL", "").strip()
+    script_project = settings.get("ChatGPT 대본 프로젝트 URL", "").strip()
+    chatgpt_project = settings.get("ChatGPT 이미지 프로젝트 URL", "").strip()
 
     sheet_manager.update_task_status(
         spreadsheet, row, "진행중",
@@ -159,13 +158,13 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
         else:
             # ===== 1단계: 대본 생성 + 구조화 =====
-            log.info("[1/4] 대본 생성 중 (Claude) - '%s'", topic)
+            log.info("[1/4] 대본 생성 중 (ChatGPT) - '%s'", topic)
             sheet_manager.update_task_status(spreadsheet, row, "1/4 대본 생성중")
 
-            claude_page = browser.new_page()
+            gpt_page = browser.new_page()
             try:
                 script_text = generate_script(
-                    claude_page,
+                    gpt_page,
                     topic=topic,
                     project_url=script_project,
                 )
@@ -194,13 +193,13 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                             f.write(script_text)
                         log.info("  대본이 수정되었습니다.")
 
-                # ===== 구조화: 같은 Claude 대화에서 장면/컷/이미지 프롬프트 생성 =====
+                # ===== 구조화: 같은 ChatGPT 대화에서 장면/컷/이미지 프롬프트 생성 =====
                 log.info("[2/4] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
                 sheet_manager.update_task_status(spreadsheet, row, "2/4 구조화중")
 
-                structured = structure_script(claude_page, script_text, settings)
+                structured = structure_script(gpt_page, script_text, settings)
             finally:
-                claude_page.close()
+                gpt_page.close()
 
             # 구조화된 대본을 시트에 반영
             script_data = {"title": task["주제"], "scenes": structured["scenes"]}
@@ -329,7 +328,6 @@ def main():
     sheet_manager.init_sheet(spreadsheet)
 
     settings = sheet_manager.read_settings(spreadsheet)
-    log.info("  카테고리: %s", settings.get("카테고리", "(미지정)") or "(미지정)")
 
     with BrowserManager() as browser:
 

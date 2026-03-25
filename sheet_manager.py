@@ -20,9 +20,9 @@ TAB_SCRIPT = "대본"
 DEFAULT_SETTINGS = {
     "카테고리": "",
     "키워드 개수": "5",
-    "Claude 키워드 프로젝트 URL": "",
-    "Claude 대본 프로젝트 URL": "",
-    "ChatGPT 프로젝트 URL": "",
+    "ChatGPT 키워드 프로젝트 URL": "",
+    "ChatGPT 대본 프로젝트 URL": "",
+    "ChatGPT 이미지 프로젝트 URL": "",
     "이미지 스타일": "webtoon style, manhwa art, digital illustration",
     "장면 수": "6",
     "장면당 컷 수": "3~4",
@@ -31,15 +31,15 @@ DEFAULT_SETTINGS = {
     "편집 모드": "capcut",
     "대본 검토": "Y",
     "편집 검토": "Y",
-    "Claude 계정": "",
     "ChatGPT 계정": "",
-    "CapCut 계정": "",
 }
 
-# 기존 시트에서 "Claude 프로젝트 URL"이 중복 사용된 경우 마이그레이션 매핑
+# 기존 시트에서 레거시 키 이름이 사용된 경우 마이그레이션 매핑
 _SETTINGS_MIGRATION = {
-    # 기존 키 → (키워드 URL 설명 포함 행, 대본 URL 설명 포함 행)
-    "Claude 프로젝트 URL": ["Claude 키워드 프로젝트 URL", "Claude 대본 프로젝트 URL"],
+    "Claude 프로젝트 URL": ["ChatGPT 키워드 프로젝트 URL", "ChatGPT 대본 프로젝트 URL"],
+    "Claude 키워드 프로젝트 URL": ["ChatGPT 키워드 프로젝트 URL"],
+    "Claude 대본 프로젝트 URL": ["ChatGPT 대본 프로젝트 URL"],
+    "ChatGPT 프로젝트 URL": ["ChatGPT 이미지 프로젝트 URL"],
 }
 
 # ── 작업목록 탭 헤더 ──
@@ -206,8 +206,7 @@ def init_sheet(spreadsheet: gspread.Spreadsheet) -> None:
 def read_settings(spreadsheet: gspread.Spreadsheet) -> dict:
     """[설정] 탭에서 key-value 쌍을 읽어 dict로 반환합니다.
 
-    "Claude 프로젝트 URL" 키가 2개인 레거시 시트도 올바르게 처리합니다.
-    첫 번째 → Claude 키워드 프로젝트 URL, 두 번째 → Claude 대본 프로젝트 URL
+    레거시 키 이름(Claude 프로젝트 URL 등)도 자동으로 마이그레이션합니다.
     """
     ws = spreadsheet.worksheet(TAB_SETTINGS)
     rows = ws.get_all_values()
@@ -224,22 +223,27 @@ def read_settings(spreadsheet: gspread.Spreadsheet) -> dict:
                 mapped_keys = _SETTINGS_MIGRATION[key]
                 if idx < len(mapped_keys):
                     mapped = mapped_keys[idx]
-                    settings[mapped] = val
+                    if val:  # 빈 값은 마이그레이션하지 않음
+                        settings[mapped] = val
                     log.info("  설정 매핑: '%s' (#%d) → '%s' = '%s'",
                              key, idx + 1, mapped, val[:60] if val else "(빈값)")
                 dup_count[key] = idx + 1
-            elif key in ("Claude 키워드 프로젝트 URL", "Claude 대본 프로젝트 URL"):
-                # 새 키 이름: 값이 있을 때만 설정 (빈 행이 마이그레이션 값을 덮어쓰지 않도록)
+            elif key in ("ChatGPT 키워드 프로젝트 URL", "ChatGPT 대본 프로젝트 URL",
+                         "ChatGPT 이미지 프로젝트 URL"):
+                # 값이 있을 때만 설정 (빈 행이 마이그레이션 값을 덮어쓰지 않도록)
                 if val:
                     settings[key] = val
             else:
                 settings[key] = val
 
     # 디버그: 프로젝트 URL 확인
-    kw_url = settings.get("Claude 키워드 프로젝트 URL", "")
-    sc_url = settings.get("Claude 대본 프로젝트 URL", "")
-    log.info("  Claude 키워드 프로젝트 URL: %s", kw_url[:60] if kw_url else "(없음)")
-    log.info("  Claude 대본 프로젝트 URL: %s", sc_url[:60] if sc_url else "(없음)")
+    kw_url = settings.get("ChatGPT 키워드 프로젝트 URL", "")
+    sc_url = settings.get("ChatGPT 대본 프로젝트 URL", "")
+    img_url = settings.get("ChatGPT 이미지 프로젝트 URL", "")
+    log.info("  ChatGPT 키워드 프로젝트 URL: %s", kw_url[:60] if kw_url else "(없음)")
+    log.info("  ChatGPT 대본 프로젝트 URL: %s", sc_url[:60] if sc_url else "(없음)")
+    log.info("  ChatGPT 이미지 프로젝트 URL: %s", img_url[:60] if img_url else "(없음)")
+    log.info("  카테고리: %s", settings.get("카테고리", "(미지정)") or "(미지정)")
 
     return settings
 

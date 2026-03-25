@@ -1,6 +1,6 @@
 """브라우저 세션 관리 모듈
 
-각 서비스(Claude, ChatGPT, CapCut)의 로그인 세션을
+각 서비스(ChatGPT, CapCut)의 로그인 세션을
 persistent context로 유지합니다. 최초 1회만 수동 로그인하면
 이후에는 자동으로 세션이 유지됩니다.
 """
@@ -105,7 +105,6 @@ def _inject_stealth(page: Page) -> None:
 def _wait_for_captcha(page: Page, service_name: str) -> None:
     """Cloudflare Turnstile/CAPTCHA 페이지가 감지되면 자동 통과를 대기합니다.
 
-    Claude: Cloudflare Turnstile (자동 통과, 가끔 체크박스)
     ChatGPT: Cloudflare 또는 자체 확인
 
     페이지 URL/타이틀/내용으로 감지하며, 서비스 페이지가 정상 로드될 때까지 대기합니다.

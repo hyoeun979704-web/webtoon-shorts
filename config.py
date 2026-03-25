@@ -16,10 +16,7 @@ BROWSER_PROFILE_DIR = os.getenv("BROWSER_PROFILE_DIR", "./browser_data")
 HEADLESS = False  # 자동화 과정을 눈으로 확인하려면 False
 SLOW_MO = 500     # 밀리초 단위 딜레이 (안정성용, 0이면 최대 속도)
 
-# Claude (claude.ai) 설정
-CLAUDE_URL = "https://claude.ai"
-
-# ChatGPT (chatgpt.com) 설정 - DALL-E 이미지 생성용
+# ChatGPT (chatgpt.com) 설정 - 키워드/대본/이미지 생성 통합
 CHATGPT_URL = "https://chatgpt.com"
 
 # CapCut (capcut.com) 설정
