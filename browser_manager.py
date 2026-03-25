@@ -103,47 +103,81 @@ def _inject_stealth(page: Page) -> None:
 
 
 def _wait_for_captcha(page: Page, service_name: str) -> None:
-    """Cloudflare/reCAPTCHA 등 사람 확인 페이지가 감지되면 사용자에게 알리고 대기합니다."""
-    captcha_selectors = [
-        'iframe[src*="challenges.cloudflare.com"]',
-        '#challenge-running',
-        '#challenge-stage',
-        'iframe[src*="recaptcha"]',
-        'iframe[src*="hcaptcha"]',
-        'div[class*="captcha"]',
-        'text="Verify you are human"',
-        'text="사람인지 확인"',
-        'text="확인 중"',
-    ]
-    selector = ", ".join(captcha_selectors)
+    """Cloudflare Turnstile/CAPTCHA 페이지가 감지되면 자동 통과를 대기합니다.
 
-    try:
-        captcha = page.locator(selector).first
-        if captcha.is_visible(timeout=3000):
-            log.warning("")
-            log.warning("=" * 50)
-            log.warning("  %s에서 사람 확인(CAPTCHA)이 감지되었습니다!", service_name)
-            log.warning("  브라우저 창에서 직접 CAPTCHA를 완료해주세요.")
-            log.warning("=" * 50)
+    Claude: Cloudflare Turnstile (자동 통과, 가끔 체크박스)
+    ChatGPT: Cloudflare 또는 자체 확인
 
-            # CAPTCHA가 사라질 때까지 대기 (최대 5분)
-            for _ in range(300):
-                page.wait_for_timeout(1000)
+    페이지 URL/타이틀/내용으로 감지하며, 서비스 페이지가 정상 로드될 때까지 대기합니다.
+    """
+    def _is_challenge_page() -> bool:
+        """현재 페이지가 Cloudflare 챌린지 등 확인 페이지인지 판단합니다."""
+        try:
+            url = page.url.lower()
+            # Cloudflare 챌린지 URL 패턴
+            if "challenges.cloudflare.com" in url:
+                return True
+
+            title = page.title().lower()
+            if any(kw in title for kw in ("just a moment", "확인 중", "attention required")):
+                return True
+
+            # 페이지 내용 체크 (짧은 타임아웃으로 빠르게)
+            for sel in (
+                'iframe[src*="challenges.cloudflare.com"]',
+                '#challenge-running',
+                '#challenge-stage',
+                '#turnstile-wrapper',
+                'iframe[src*="turnstile"]',
+            ):
                 try:
-                    if not captcha.is_visible():
-                        log.info("  CAPTCHA 통과 완료!")
-                        page.wait_for_timeout(2000)
-                        return
+                    if page.locator(sel).first.is_visible(timeout=500):
+                        return True
                 except Exception:
-                    # 요소가 DOM에서 사라짐 = 통과
-                    log.info("  CAPTCHA 통과 완료!")
-                    page.wait_for_timeout(2000)
-                    return
+                    pass
 
-            log.warning("  CAPTCHA 대기 타임아웃. 수동으로 완료 후 Enter를 눌러주세요.")
-            input("  → CAPTCHA 완료 후 Enter: ")
-    except Exception:
-        pass  # CAPTCHA 없으면 정상 진행
+            # 본문 텍스트로 판단 (DOM이 거의 비어있고 확인 메시지만 있는 경우)
+            try:
+                body_text = page.locator("body").first.inner_text(timeout=1000)
+                if len(body_text) < 200 and any(
+                    kw in body_text for kw in ("Verify you are human", "사람인지 확인",
+                                                 "확인 중", "Just a moment")
+                ):
+                    return True
+            except Exception:
+                pass
+
+        except Exception:
+            pass
+        return False
+
+    # 빠른 체크: 챌린지 페이지가 아니면 즉시 반환
+    if not _is_challenge_page():
+        return
+
+    log.info("  %s: 사람 확인(Cloudflare) 감지. 자동 통과 대기 중...", service_name)
+
+    # 최대 2분 대기 (Turnstile은 보통 5~15초에 자동 통과)
+    for elapsed in range(120):
+        page.wait_for_timeout(1000)
+
+        if not _is_challenge_page():
+            log.info("  사람 확인 통과 완료! (%d초)", elapsed + 1)
+            page.wait_for_timeout(2000)  # 리다이렉트 안정화
+            return
+
+        # 30초마다 안내
+        if elapsed > 0 and elapsed % 30 == 0:
+            log.warning("  아직 확인 중... 브라우저에서 체크박스가 있으면 클릭해주세요. (%d초)", elapsed)
+
+    # 타임아웃 → 수동 완료 요청
+    log.warning("")
+    log.warning("=" * 50)
+    log.warning("  %s 사람 확인을 자동 통과하지 못했습니다.", service_name)
+    log.warning("  브라우저에서 직접 완료 후 Enter를 눌러주세요.")
+    log.warning("=" * 50)
+    input("  → 확인 완료 후 Enter: ")
+    page.wait_for_timeout(2000)
 
 
 class BrowserManager:
