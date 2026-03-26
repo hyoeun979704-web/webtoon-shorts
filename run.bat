@@ -7,7 +7,7 @@ echo   Webtoon Shorts Auto Generator
 echo ============================================
 echo.
 
-REM 필수 패키지 자동 설치
+REM Install dependencies
 pip install -q -r requirements.txt 2>nul
 
 echo.
