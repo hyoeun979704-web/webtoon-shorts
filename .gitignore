@@ -15,6 +15,11 @@ env/
 # Environment variables
 .env
 
+# Credentials
+service_account.json
+credentials.json
+authorized_user.json
+
 # Output
 output/
 temp/

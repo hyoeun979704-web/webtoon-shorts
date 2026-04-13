@@ -1,137 +1,117 @@
 # 웹툰 숏폼 자동 생성기
 
-**Google Sheets**를 컨트롤 패널로, 각 서비스의 **Pro 구독 + 프로젝트** 기능을 브라우저 자동화로 조작하여
-25~40초 웹툰 스타일 숏폼 영상을 자동 생성합니다.
+**OpenAI API**와 **Google Sheets**를 사용해 웹툰 숏폼 영상 에셋(대본 + 이미지)을
+자동 생성합니다. 브라우저 자동화 없이 API만 사용합니다.
 
 ## 파이프라인
 
 ```
 [시트] 카테고리 설정
      ↓
-[Claude 프로젝트] 토픽 키워드 발굴 → [시트] 작업목록에 자동 추가
+[OpenAI API] 토픽 키워드 발굴 → [시트] 작업목록에 자동 추가
      ↓
-[Claude 프로젝트] 대본 생성 → [시트] 대본 탭에서 확인/수정 ← 검토 포인트 1
+[OpenAI API] 대본 생성 → [시트] 대본 탭에서 확인/수정 ← 검토 포인트
      ↓
-[ChatGPT 프로젝트] DALL-E 이미지 생성 (컷별 실시간 상태)
+[OpenAI API] 대본 구조화 (장면/컷/이미지 프롬프트)
      ↓
-[Typecast 웹] 음성 합성 (장면별 실시간 상태)
+[DALL-E API] 이미지 생성 (컷별)
      ↓
-[CapCut 웹] 영상 편집 → 브라우저에서 확인/수정 ← 검토 포인트 2
-     ↓
-최종 영상 출력
+output/project_YYYYMMDD_HHMMSS/
+  ├── script.txt       # 대본
+  └── images/          # 컷별 이미지 (PNG)
 ```
+
+생성된 이미지/대본을 CapCut 등 원하는 편집 도구에서 수동으로 영상을 만드세요.
+
+## 설치
+
+```bash
+pip install -r requirements.txt
+```
+
+### API 키 설정
+1. `.env.example`을 복사해서 `.env`로 이름 변경
+2. `.env`에 OpenAI API 키 입력:
+   ```
+   OPENAI_API_KEY=sk-...
+   ```
+
+### Google Sheets 인증
+서비스 계정 방식(권장):
+1. [Google Cloud Console](https://console.cloud.google.com/)에서 프로젝트 생성
+2. **Google Sheets API**, **Google Drive API** 활성화
+3. 서비스 계정 생성 → JSON 키 다운로드
+4. 파일을 `service_account.json`으로 이름 변경 후 프로젝트 루트에 배치
+5. 사용할 Google Sheet를 서비스 계정 이메일(`xxx@xxx.iam.gserviceaccount.com`)에 **편집자**로 공유
+
+## 사용법
+
+```bash
+# 0) 시트 초기 세팅 (최초 1회)
+python setup_sheet.py
+# 또는 Apps Script: setup_sheet.gs 내용을 시트 Apps Script에 붙여넣고 실행
+
+# 1) 시트 [설정] 탭에 필수 항목 입력:
+#    - 카테고리: "직장인 공감" (필수)
+
+# 2) 실행
+python main.py
+# Windows: run.bat 더블클릭
+```
+
+`python main.py`로 다음이 자동 실행됩니다:
+1. 시트 탭/헤더 자동 초기화 (없으면 생성)
+2. 대기 작업 없으면 → 키워드 자동 발굴 → 작업목록 추가
+3. 대본 생성 → **대본 검토 (시트에서 수정 후 Enter)**
+4. 대본 구조화 (장면/컷/이미지 프롬프트 생성)
+5. 이미지 생성 (DALL-E, 컷별 PNG 저장)
 
 ## Google Sheets 구조
 
 ### [설정] 탭
 | 항목 | 값 | 설명 |
 |------|------|------|
-| **카테고리** | 직장인 공감 | 토픽 키워드 발굴 대상 카테고리 |
-| **키워드 개수** | 5 | 한 번에 발굴할 토픽 수 |
-| **Claude 프로젝트 URL** | https://claude.ai/project/xxx | 대본 생성용 프로젝트 (시스템 프롬프트 적용) |
-| **ChatGPT 프로젝트 URL** | https://chatgpt.com/g/g-xxx | 이미지 생성용 GPT/프로젝트 (스타일 지침 적용) |
-| **성우 이름** | (필수) | Typecast 성우 이름 |
-| 이미지 스타일 | webtoon style, manhwa art... | DALL-E 프롬프트에 추가 |
-| 장면 수 | 5 | 장면 개수 |
+| **카테고리** | 직장인 공감 | 필수. 토픽 발굴 대상 카테고리 |
+| 키워드 개수 | 5 | 한 번에 발굴할 토픽 수 |
+| 이미지 스타일 | webtoon style, manhwa art, digital illustration | DALL-E 프롬프트에 추가 |
+| 장면 수 | 6 | 장면 개수 |
 | 장면당 컷 수 | 3~4 | 장면당 이미지 수 |
 | 총 이미지 수 | 15~20 | 전체 이미지 수 |
-| 편집 모드 | capcut | capcut / skip |
+| 목표 길이(초) | 30 | 완성 영상 목표 길이 |
 | 대본 검토 | Y | Y면 대본 생성 후 시트에서 수정 가능 |
-| 편집 검토 | Y | Y면 CapCut 배치 후 브라우저에서 수정 가능 |
 
 ### [작업목록] 탭
 | 번호 | 주제 | 상태 | 제목 | 장면수 | 시작시간 | 완료시간 | 출력경로 | 비고 |
 |------|------|------|------|--------|----------|----------|----------|------|
-| 1 | 월요일 아침 지각 위기 | 대기 | | | | | | 출근길 공감 필수 |
 
-→ `--keywords`로 자동 생성되거나 직접 입력
+- 상태 `대기`: 1단계(대본 생성)부터 실행
+- 상태 `대본완료`: [대본] 탭의 내용을 사용해 이미지 생성부터 실행
 
 ### [대본] 탭
 | 장면번호 | 컷번호 | 나레이션 | 자막 | 이미지 프롬프트 | 효과음 | 장면전환 | 이미지 상태 | 음성 상태 |
 |----------|--------|----------|------|----------------|--------|----------|------------|----------|
 
-- **나레이션**: 장면당 1개, 음성 생성에 사용 (첫 컷에만 표시)
-- **자막**: 컷별 자유 작성, 기본값은 나레이션 텍스트
-- **효과음**: CapCut에 있는 효과음 이름을 그대로 입력
-- **장면전환**: CapCut에 있는 전환 효과 이름을 그대로 입력
-- 대본 생성 후 자동 기록됨, 수정 후 Enter로 진행
-
-## 설치
-
-```bash
-pip install -r requirements.txt
-playwright install chromium
-
-# Google OAuth 설정
-# 1. Google Cloud Console → OAuth 2.0 클라이언트 ID 생성 (데스크톱 앱)
-# 2. credentials.json 다운로드 → 프로젝트 루트에 배치
-```
-
-## 사용법
-
-```bash
-# 0) 시트 초기 세팅 (최초 1회 - 서식/드롭다운/조건부서식 적용)
-#    방법 A: Python 스크립트 (Google OAuth 또는 서비스 계정 필요)
-python setup_sheet.py
-#    방법 B: Apps Script (인증 없이 시트에서 직접 실행)
-#      → 시트에서 [확장 프로그램] > [Apps Script] 열기
-#      → setup_sheet.gs 내용을 붙여넣고 ▶ 실행 (함수: setupAll)
-# 기존 시트 초기화 후 재생성:
-python setup_sheet.py --reset
-
-# 1) 서비스 로그인 (최초 1회 - 브라우저에서 직접 로그인)
-python main.py --login
-
-# 2) 시트 [설정] 탭에 필수 항목 입력:
-#    - 카테고리: "직장인 공감"     (필수, 주황색 배경)
-#    - 성우 이름: "서연"           (필수, 주황색 배경)
-#    - Claude 프로젝트 URL         (선택)
-#    - ChatGPT 프로젝트 URL        (선택)
-
-# 3) 실행 (이것만 하면 됩니다!)
-python main.py
-```
-
-`python main.py` 하나로 다음이 모두 자동 실행됩니다:
-1. 시트 탭/헤더 자동 초기화 (없으면 생성)
-2. 대기 작업 없으면 → 키워드 자동 발굴 → 작업목록 추가
-3. 대본 생성 → **대본 검토 (시트에서 수정 후 Enter)**
-4. 이미지 생성 (15~20장)
-5. 음성 합성
-6. CapCut 편집 → **편집 검토 (브라우저에서 수정 후 Enter)**
-7. 최종 영상 내보내기
-
-사용자가 직접 입력하는 것은 **시트의 카테고리/성우 이름**과 **검토 시 Enter** 뿐입니다.
-
 ## 프로젝트 구조
 
 ```
 ├── main.py              # 메인 파이프라인 오케스트레이터
-├── setup_sheet.py       # Google Sheets 초기 세팅 (Python, OAuth/서비스 계정)
-├── setup_sheet.gs       # Google Sheets 초기 세팅 (Apps Script, 인증 불필요)
-├── config.py            # 설정 (URL, 경로 등)
-├── utils.py             # 공통 유틸리티 (로깅, JSON 파싱, Playwright 헬퍼)
-├── browser_manager.py   # Playwright 브라우저 세션 관리
+├── setup_sheet.py       # Google Sheets 초기 세팅 (Python)
+├── setup_sheet.gs       # Google Sheets 초기 세팅 (Apps Script)
+├── config.py            # 설정 (API 키, 경로 등)
+├── utils.py             # 로깅 유틸
+├── openai_client.py     # OpenAI API 래퍼 (chat, DALL-E)
 ├── sheet_manager.py     # Google Sheets CRUD
-├── keyword_generator.py # Claude 키워드 발굴
-├── script_generator.py  # Claude 대본 생성
-├── image_generator.py   # ChatGPT DALL-E 이미지 생성
-├── voice_generator.py   # Typecast 음성 합성
-├── video_editor.py      # CapCut 영상 편집
+├── keyword_generator.py # 키워드 발굴
+├── script_generator.py  # 대본 생성 + 구조화
+├── image_generator.py   # DALL-E 이미지 생성
+├── prompts/             # 시스템 프롬프트 (keyword, script, structure)
 ├── requirements.txt     # Python 의존성
 └── .env.example         # 환경변수 예시
 ```
 
-## Claude/ChatGPT 프로젝트 활용
+## 시스템 프롬프트 커스터마이징
 
-### Claude 프로젝트 설정 예시
-Claude 프로젝트에 시스템 프롬프트를 설정하면 대본 품질이 향상됩니다:
-- 웹툰 장르 가이드 (로맨스, 공감, 개그 등)
-- 캐릭터 페르소나 설정
-- 참고 대본 예시를 knowledge에 업로드
-
-### ChatGPT GPT 설정 예시
-커스텀 GPT에 이미지 스타일을 지정하면 일관된 이미지가 생성됩니다:
-- 특정 웹툰 화풍 지침
-- 색감, 선 굵기, 음영 스타일
-- 캐릭터 디자인 레퍼런스를 knowledge에 업로드
+`prompts/` 폴더의 텍스트 파일을 수정해 생성 스타일을 조정할 수 있습니다:
+- `prompts/keyword.txt` - 키워드 발굴 지침
+- `prompts/script.txt` - 대본 작성 지침
+- `prompts/structure.txt` - 장면/컷 구조화 지침
