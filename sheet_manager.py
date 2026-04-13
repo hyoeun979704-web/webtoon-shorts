@@ -25,16 +25,15 @@ DEFAULT_SETTINGS = {
     "장면당 컷 수": "3~4",
     "총 이미지 수": "15~20",
     "목표 길이(초)": "30",
-    "편집 모드": "capcut",
     "대본 검토": "Y",
-    "편집 검토": "Y",
 }
 
-# 기존 시트에서 레거시 키 이름이 사용된 경우 무시 목록
+# 기존 시트에서 레거시(브라우저 자동화/CapCut) 키 이름이 사용된 경우 무시 목록
 _LEGACY_KEYS = {
     "Claude 프로젝트 URL", "Claude 키워드 프로젝트 URL", "Claude 대본 프로젝트 URL",
     "ChatGPT 프로젝트 URL", "ChatGPT 키워드 프로젝트 URL", "ChatGPT 대본 프로젝트 URL",
     "ChatGPT 이미지 프로젝트 URL", "ChatGPT 계정",
+    "편집 모드", "편집 검토", "CapCut 계정",
 }
 
 # ── 작업목록 탭 헤더 ──

@@ -1,4 +1,4 @@
-"""웹툰 숏폼 자동 생성 파이프라인 (OpenAI API + Google Sheets)
+"""웹툰 숏폼 자동 생성 파이프라인 (OpenAI API 전용)
 
 Google Sheets를 컨트롤 패널로 사용합니다:
   [설정] 탭 - 카테고리, 스타일 등
@@ -10,8 +10,7 @@ Google Sheets를 컨트롤 패널로 사용합니다:
   '대본완료' → 시트 [대본] 탭의 대본을 사용, 이미지 생성부터 실행
 
 사용법:
-    python main.py           → 실행 (키워드 발굴 → 영상 생성)
-    python main.py --login   → CapCut 로그인만 수행
+    python main.py           → 실행 (키워드 발굴 → 이미지 에셋 생성)
 """
 
 import argparse
@@ -20,22 +19,10 @@ import time
 
 import config
 import sheet_manager
-from browser_manager import BrowserManager, ensure_login
 from keyword_generator import generate_keywords, select_keyword
 from script_generator import generate_script, structure_script
 from image_generator import generate_images
-from video_editor import assemble_video
 from utils import log
-
-
-def login_all(browser: BrowserManager, settings: dict = None):
-    """CapCut에 로그인합니다."""
-    page = browser.new_page()
-    log.info("CapCut 로그인 확인 중...")
-    ensure_login(page, config.CAPCUT_URL, "CapCut")
-    log.info("  CapCut 로그인 완료!")
-    page.close()
-    log.info("로그인 완료!")
 
 
 def _validate_settings(settings: dict) -> None:
@@ -64,7 +51,6 @@ def _build_script_prompt(keyword_item: dict) -> str:
     """선택된 키워드 항목으로 대본 프롬프트를 구성합니다."""
     title = keyword_item["title"]
     parts = [title]
-    # 타이틀에 이미 키워드/CTA가 포함되어 있으면 중복 추가하지 않음
     if keyword_item.get("keywords") and "키워드:" not in title:
         parts.append(f"키워드: {', '.join(keyword_item['keywords'])}")
     if keyword_item.get("cta") and "CTA" not in title:
@@ -83,14 +69,13 @@ def _dedup_topic(text: str) -> str:
     return "\n".join(seen)
 
 
-def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dict):
+def process_task(spreadsheet, task: dict, settings: dict):
     """하나의 작업(주제)을 처리합니다.
 
     작업 상태에 따라 시작 단계가 달라집니다:
       '대기'     → 1단계(대본 생성)부터 시작
       '대본완료' → 시트 [대본] 탭의 대본을 사용, 이미지 생성부터 시작
     """
-    # 비고에 키워드+CTA 포함 프롬프트가 있으면 그것을 사용
     topic = _dedup_topic(str(task.get("비고", "")).strip() or task["주제"])
     task_num = task["번호"]
     task_status = str(task.get("상태", "")).strip()
@@ -101,7 +86,6 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
     images_dir = os.path.join(project_dir, "images")
     os.makedirs(project_dir, exist_ok=True)
 
-    # 설정 읽기
     review_script = settings.get("대본 검토", "Y").strip().upper() == "Y"
     image_style = settings.get(
         "이미지 스타일",
@@ -113,10 +97,6 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         시작시간=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
 
-    edit_mode = settings.get("편집 모드", "capcut").strip().lower()
-    review_edit = settings.get("편집 검토", "Y").strip().upper() == "Y"
-
-    # 시트 대본 기반 실행 여부 판단
     skip_script_gen = task_status == "대본완료"
 
     try:
@@ -137,15 +117,15 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             log.info("  시트 대본 로드: %d장면, %d컷", len(structured["scenes"]), total_cuts)
 
             sheet_manager.update_task_status(
-                spreadsheet, row, "2/4 구조화완료",
+                spreadsheet, row, "2/3 구조화완료",
                 제목=task["주제"],
                 장면수=len(structured["scenes"]),
             )
 
         else:
             # ===== 1단계: 대본 생성 (OpenAI API) =====
-            log.info("[1/4] 대본 생성 중 (OpenAI API) - '%s'", topic)
-            sheet_manager.update_task_status(spreadsheet, row, "1/4 대본 생성중")
+            log.info("[1/3] 대본 생성 중 (OpenAI API) - '%s'", topic)
+            sheet_manager.update_task_status(spreadsheet, row, "1/3 대본 생성중")
 
             script_text = generate_script(topic=topic)
 
@@ -155,7 +135,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
             log.info("  대본 (%d자): %s...", len(script_text), script_text[:100])
 
-            # ===== 검토 포인트 1: 대본 검토 =====
+            # ===== 검토 포인트: 대본 검토 =====
             if review_script:
                 sheet_manager.update_task_status(spreadsheet, row, "대본 검토 대기")
                 log.info("")
@@ -174,12 +154,11 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
                     log.info("  대본이 수정되었습니다.")
 
             # ===== 2단계: 구조화 (OpenAI API) =====
-            log.info("[2/4] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
-            sheet_manager.update_task_status(spreadsheet, row, "2/4 구조화중")
+            log.info("[2/3] 대본 구조화 중 (장면/컷/이미지 프롬프트)...")
+            sheet_manager.update_task_status(spreadsheet, row, "2/3 구조화중")
 
             structured = structure_script(script_text, settings)
 
-            # 구조화된 대본을 시트에 반영
             script_data = {"title": task["주제"], "scenes": structured["scenes"]}
             sheet_manager.write_script_to_sheet(spreadsheet, script_data)
 
@@ -187,15 +166,15 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             log.info("  시트 반영 완료: %d장면, %d컷", len(structured["scenes"]), total_cuts)
 
             sheet_manager.update_task_status(
-                spreadsheet, row, "2/4 구조화완료",
+                spreadsheet, row, "2/3 구조화완료",
                 제목=task["주제"],
                 장면수=len(structured["scenes"]),
             )
 
         # ===== 3단계: 이미지 생성 (DALL-E API) =====
         total_cuts = sum(len(s.get("cuts", [])) for s in structured["scenes"])
-        log.info("[3/4] 이미지 생성 중 (DALL-E API) - %d컷...", total_cuts)
-        sheet_manager.update_task_status(spreadsheet, row, "3/4 이미지 생성중")
+        log.info("[3/3] 이미지 생성 중 (DALL-E API) - %d컷...", total_cuts)
+        sheet_manager.update_task_status(spreadsheet, row, "3/3 이미지 생성중")
 
         image_paths, failed_cuts = generate_images(
             structured=structured,
@@ -224,27 +203,6 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
         else:
             log.info("  이미지 생성 완료 (%d컷)", len(image_paths))
 
-        # ===== 4단계: CapCut 영상 편집 =====
-        if edit_mode == "skip":
-            log.info("[4/4] 편집 건너뜀 (편집 모드: skip)")
-        else:
-            log.info("[4/4] 영상 편집 중 (CapCut)...")
-            sheet_manager.update_task_status(spreadsheet, row, "4/4 편집중")
-
-            video_path = os.path.join(project_dir, "final.mp4")
-            capcut_page = browser.new_page()
-            try:
-                assemble_video(
-                    capcut_page,
-                    script=script_data,
-                    image_paths=image_paths,
-                    output_path=video_path,
-                    auto_export=not review_edit,
-                )
-                log.info("  영상 내보내기 완료: %s", video_path)
-            finally:
-                capcut_page.close()
-
         # ===== 완료 =====
         sheet_manager.update_task_status(
             spreadsheet, row, "완료",
@@ -252,6 +210,8 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
             출력경로=project_dir,
         )
         log.info("완료! 출력 폴더: %s", project_dir)
+        log.info("  - 대본: %s/script.txt", project_dir)
+        log.info("  - 이미지: %s/", images_dir)
 
     except Exception as e:
         sheet_manager.update_task_status(
@@ -264,8 +224,7 @@ def process_task(browser: BrowserManager, spreadsheet, task: dict, settings: dic
 
 def main():
     parser = argparse.ArgumentParser(description="웹툰 숏폼 자동 생성기")
-    parser.add_argument("--login", action="store_true", help="CapCut 로그인만 수행 (최초 1회)")
-    args = parser.parse_args()
+    parser.parse_args()
 
     # ===== Google Sheets 연결 =====
     log.info("Google Sheets 연결 중...")
@@ -276,60 +235,50 @@ def main():
 
     settings = sheet_manager.read_settings(spreadsheet)
 
-    with BrowserManager() as browser:
+    _validate_settings(settings)
 
-        # ===== 로그인 전용 모드 =====
-        if args.login:
-            login_all(browser, settings)
-            log.info("로그인 완료 - 종료합니다.")
-            return
+    # 대기 작업 확인
+    pending = sheet_manager.get_pending_tasks(spreadsheet)
 
-        # ===== 실행 모드 =====
-        _validate_settings(settings)
+    if not pending:
+        # 키워드 발굴 → 파싱 → 1개 선택 → 작업 추가
+        log.info("대기 작업이 없어 키워드를 발굴합니다...")
+        selected = _discover_and_select_keyword(settings)
 
-        # 대기 작업 확인
+        topic_text = _build_script_prompt(selected)
+        added = sheet_manager.append_tasks(spreadsheet, [
+            {"topic": selected["title"], "hook": topic_text}
+        ])
+        log.info("[작업목록]에 %d건 추가 완료", added)
+
         pending = sheet_manager.get_pending_tasks(spreadsheet)
 
-        if not pending:
-            # 키워드 발굴 → 파싱 → 1개 선택 → 작업 추가
-            log.info("대기 작업이 없어 키워드를 발굴합니다...")
-            selected = _discover_and_select_keyword(settings)
+    if not pending:
+        log.error("대기 작업이 없습니다. 시트를 확인해주세요.")
+        return
 
-            # 선택된 키워드의 제목+키워드+CTA를 주제로 작업 추가
-            topic_text = _build_script_prompt(selected)
-            added = sheet_manager.append_tasks(spreadsheet, [
-                {"topic": selected["title"], "hook": topic_text}
-            ])
-            log.info("[작업목록]에 %d건 추가 완료", added)
+    log.info("처리할 작업: %d건", len(pending))
+    for t in pending:
+        log.info("  #%s %s", t["번호"], t["주제"])
 
-            pending = sheet_manager.get_pending_tasks(spreadsheet)
+    # 작업 순서대로 처리
+    failed = 0
+    for task in pending:
+        log.info("")
+        log.info("=" * 50)
+        log.info("  작업 #%s: %s", task["번호"], task["주제"])
+        log.info("=" * 50)
+        try:
+            process_task(spreadsheet, task, settings)
+        except Exception as e:
+            log.error("작업 #%s 실패: %s", task["번호"], e)
+            failed += 1
+            continue
 
-        if not pending:
-            log.error("대기 작업이 없습니다. 시트를 확인해주세요.")
-            return
-
-        log.info("처리할 작업: %d건", len(pending))
-        for t in pending:
-            log.info("  #%s %s", t["번호"], t["주제"])
-
-        # 작업 순서대로 처리
-        failed = 0
-        for task in pending:
-            log.info("")
-            log.info("=" * 50)
-            log.info("  작업 #%s: %s", task["번호"], task["주제"])
-            log.info("=" * 50)
-            try:
-                process_task(browser, spreadsheet, task, settings)
-            except Exception as e:
-                log.error("작업 #%s 실패: %s", task["번호"], e)
-                failed += 1
-                continue
-
-        if failed:
-            log.warning("완료! (성공 %d건 / 실패 %d건)", len(pending) - failed, failed)
-        else:
-            log.info("모든 작업 완료! (%d건)", len(pending))
+    if failed:
+        log.warning("완료! (성공 %d건 / 실패 %d건)", len(pending) - failed, failed)
+    else:
+        log.info("모든 작업 완료! (%d건)", len(pending))
 
 
 if __name__ == "__main__":

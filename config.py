@@ -1,4 +1,4 @@
-"""프로젝트 설정 - OpenAI API + Google Sheets + 브라우저(CapCut) 기반"""
+"""프로젝트 설정 - OpenAI API + Google Sheets 기반"""
 
 import os
 from dotenv import load_dotenv
@@ -19,16 +19,7 @@ DALLE_MODEL = os.getenv("DALLE_MODEL", "dall-e-3")
 # 시스템 프롬프트 경로
 PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
-# 브라우저 설정 (CapCut 편집용)
-BROWSER_PROFILE_DIR = os.getenv("BROWSER_PROFILE_DIR", "./browser_data")
-BROWSER_CHANNEL = os.getenv("BROWSER_CHANNEL", "msedge")
-HEADLESS = False
-SLOW_MO = 500
-
-# CapCut (capcut.com) 설정
-CAPCUT_URL = "https://www.capcut.com"
-
-# 영상 설정
+# 영상 설정 (이미지 크기)
 VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
 
