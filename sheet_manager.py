@@ -20,11 +20,11 @@ TAB_SCRIPT = "대본"
 DEFAULT_SETTINGS = {
     "카테고리": "",
     "키워드 개수": "5",
-    "이미지 스타일": "webtoon style, manhwa art, digital illustration",
-    "장면 수": "6",
-    "장면당 컷 수": "3~4",
-    "총 이미지 수": "15~20",
-    "목표 길이(초)": "30",
+    "이미지 스타일": "high-quality anime illustration, soft and luminous lighting, pastel warm colors, detailed light novel cover style, aesthetic anime art",
+    "장면 수": "10",
+    "장면당 컷 수": "4",
+    "총 이미지 수": "35~45",
+    "목표 길이(초)": "60",
     "대본 검토": "Y",
 }
 

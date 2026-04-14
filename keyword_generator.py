@@ -26,7 +26,7 @@ def _parse_keyword_items(text: str) -> list[dict]:
     items = []
     seen_numbers = set()
 
-    _NUM_ID = r"[가-힣A-Za-z]+[\s]*-[\s]*\d+"
+    _NUM_ID = r"[가-힣A-Za-z0-9\s_]+[\s]*-[\s]*\d+"
 
     _HEADER_PATTERNS = [
         re.compile(rf"\[({_NUM_ID})\]\s*(.*)"),
